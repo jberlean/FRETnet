@@ -39,6 +39,7 @@ For `Network` `network`, the simulation time is in `network._time`, and node sta
 * `rxn_type`: the type of reaction (`emit`, `decay`, `production`, `transfer`, or the wildcard `'*'`)
 * `input`: the input node (a `Node` object, `None`, or the wildcard `'*'`)
 * `output`: the output node (a `Node` object, `None`, or the wildcard `'*'`)
+
 The value of each `dict` entry is a positive integer representing the number of times the reaction occurred over the course of the simulation.
 
 ### `gui.py`
