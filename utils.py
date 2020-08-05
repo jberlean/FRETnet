@@ -67,6 +67,10 @@ class Node(object):
   def emit_rate(self):
     return self._emit_rate
 
+  @property
+  def status(self):
+    if self._status:  return 'ON'
+    else:  return 'OFF'
   def is_on(self):
     return self._status
   def is_off(self):
@@ -162,6 +166,7 @@ class Network(object):
   def __init__(self, nodes = []):
     self._nodes = nodes[:]
     self._stats = {}
+    self._node_stats = {n: {} for n in nodes}
 
     self._time = 0.0
 
@@ -186,6 +191,9 @@ class Network(object):
     keys = it.product(['*', rxn.mode], ['*', rxn.input], ['*', rxn.output])
     for key in keys:
       self._stats[key] = self._stats.get(key, 0) + 1
+
+    for node in self._nodes:
+      self._node_stats[node][node.status] = self._node_stats[node].get(node.status, 0) + dt
 
     changed_nodes = [rxn.input, rxn.output]
     for node in changed_nodes:

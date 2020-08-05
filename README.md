@@ -35,12 +35,14 @@ Two `Nodes` `n1` and `n2` may be linked in an input-output relationship via `n2.
 A `Network` object simulations a collection of nodes. Note that for GUI simulations, the `Network` object need not be explicitly generated (it is created by the GUI).
 Each `Network` object collects statistics on its nodes' behavior, as well as the global simulation time.
 
-For `Network` `network`, the simulation time is in `network._time`, and node statistics are stored in a `dict` (`network._stats`). `network._stats` has `tuple` keys following the form `(rxn_type, input, output)`:
+For `Network` `network`, the simulation time is in `network._time`. Reaction statistics are stored in a `dict` (`network._stats`). `network._stats` has `tuple` keys following the form `(rxn_type, input, output)`:
 * `rxn_type`: the type of reaction (`emit`, `decay`, `production`, `transfer`, or the wildcard `'*'`)
 * `input`: the input node (a `Node` object, `None`, or the wildcard `'*'`)
 * `output`: the output node (a `Node` object, `None`, or the wildcard `'*'`)
 
 The value of each `dict` entry is a positive integer representing the number of times the reaction occurred over the course of the simulation.
+
+The time each Node spends in each state is stored in a `dict` (`network._node_stats`), whose keys are the corresponding Node objects. The value of each `dict` entry is a `dict` mapping status (currently only `'ON'` or `'OFF'`) to the simulation time spent in that state.
 
 ### `gui.py`
 
