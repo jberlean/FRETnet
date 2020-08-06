@@ -11,7 +11,7 @@ def generate_RBM_network(num_nodes, rate_matrix, input_rates, output_rates):
   center_x = rad + 50
   center_y = rad + 50
   node_pos = [
-      (rad*np.cos(n/num_nodes*2*np.pi + np.pi/num_nodes) + center_x, rad*np.sin(n/num_nodes*2*np.pi + np.pi/num_nodes) + center_y)
+      (rad*np.cos(n/num_nodes*2*np.pi) + center_x, rad*np.sin(n/num_nodes*2*np.pi) + center_y)
       for n in range(num_nodes)
   ]
 
@@ -27,9 +27,9 @@ def generate_RBM_network(num_nodes, rate_matrix, input_rates, output_rates):
 
   sim = gui.Simulator(nodes = nodes, node_pos = node_pos)
   return sim
-# %%
+
 import numpy as np
-# %%
+
 num_nodes = 8
 rate_matrix = np.array([
   [0, 0, 0, 0, 0, 0, 1, 0],
@@ -55,7 +55,7 @@ sol = np.linalg.solve(solve_matrix, input_rates)
 # (multiplying by total output rate)
 activation = sol * ((rate_matrix * (1-sol)).sum(axis=1) + output_rates)
 print(activation)
-# %%
+
 sim = generate_RBM_network(num_nodes, rate_matrix, input_rates, output_rates)
 sim.after(100, sim.quit)
 sim.mainloop()
