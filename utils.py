@@ -17,7 +17,7 @@ class Reaction(object):
     elif self.mode == 'decay' or self.mode == 'emit':
       return self.rate if self.input.is_on() else 0.0
     else:
-      print('WARNING: Can\'t calculate propensity for unknown reaction type {} (in: {}, out: {}, rate: {})'.format(mode, input, output, rate))
+      print('WARNING: Can\'t calculate propensity for unknown reaction type {} (in: {}, out: {}, rate: {})'.format(self.mode, self.input, self.output, self.rate))
       return 0.0
 
   def execute(self):
@@ -32,7 +32,7 @@ class Reaction(object):
       assert(self.input.is_on())
       self.input.set_off()
     else:
-      print('WARNING: Can\'t execute unknown reaction type {} (in: {}, out: {}, rate: {})'.format(mode, input, output, rate))
+      print('WARNING: Can\'t execute unknown reaction type {} (in: {}, out: {}, rate: {})'.format(self.mode, self.input, self.output, self.rate))
 
 
 class Node(object):
@@ -123,7 +123,7 @@ class Node(object):
 #    for r,p in zip(self._reactions, self._reaction_propensities):
 #      rxn_str = '{} -> {}'.format(r.input.name if r.input is not None else '', r.output.name if r.output is not None else '')
 #      print('{}: {}{}'.format(rxn_str, p,'*' if r==rxn else ''))
-#
+
     return rxn
 
 class InputNode(Node):

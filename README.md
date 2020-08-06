@@ -27,7 +27,7 @@ While in GUI mode, each node is displayed with its activation (time-averaged flu
 ### `utils.py`
 
 `Node` objects define individual fluorophores.
-Each `Node` has a `decay_rate` and `emit_rate` describing its intrinsic non-readiative decay and radiative emission rate constants, respectively
+Each `Node` has a `decay_rate` and `emit_rate` describing its intrinsic non-radiative decay and radiative emission rate constants, respectively
 (note that activation values do not distinguish between these two decay pathways). 
 The `InputNode` object inherits from `Node`, and has an additional `production_rate` parameter describing its excitation rate constant via external power source.
 Two `Nodes` `n1` and `n2` may be linked in an input-output relationship via `n2.add_input(n1)`
