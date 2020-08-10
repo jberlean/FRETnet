@@ -185,15 +185,14 @@ class Network(object):
 
   def step_forward(self):
     rxn, dt = self.choose_reaction()
+    for node in self._nodes:
+      self._node_stats[node][node.status] = self._node_stats[node].get(node.status, 0) + dt
     rxn.execute()
     self._time += dt
 
     keys = it.product(['*', rxn.mode], ['*', rxn.input], ['*', rxn.output])
     for key in keys:
       self._stats[key] = self._stats.get(key, 0) + 1
-
-    for node in self._nodes:
-      self._node_stats[node][node.status] = self._node_stats[node].get(node.status, 0) + dt
 
     changed_nodes = [rxn.input, rxn.output]
     for node in changed_nodes:
