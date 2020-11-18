@@ -23,33 +23,28 @@ def choose(a, b):
         prod *= (a-i) / (i+1)
     return round(prod)
 
-def off_patterns(pat, p_off):
+def off_patterns(pat, p_off, num_pats):
     """
     Returns all patterns which are off from pat by a proportion 
     specified by p_off, with a minimum of 1 element changed.
 
     Args:
-        pat (np.array): Binary column vector of length d
-        p_off (float in [0,1]): Proportion of nodes to change. Will be rounded up.
+        pat (np.array): Binary column vector of length d.
+        p_off (float in [0,1]): Probability of each node being corrupted.
+        num_pats (int): Number of corrupted patterns to return.
 
     Returns:
-        A 2darray (dtype=float) with all desired patterns as columns.
+        len(pat) x num_pats 2darray (dtype=float) with corrupted patterns as columns.
     """
     d = len(pat)
-    num_to_change = int(math.ceil(p_off * d))
-    cols = choose(d, num_to_change)
-    all_indices = it.combinations(range(d), num_to_change)
 
-    out = np.zeros((d, cols)) # dtype=float by default
-    for col in range(cols):
-        indices = all_indices.__next__()
-        newpat = pat.copy()
-        for i in indices:
-            newpat[i] = pat[i] ^ 1
-        out[:,col:col+1] = newpat
-    
+    corrupt_mask = np.random.default_rng().random((d, num_pats))
+    out = np.tile(pat, num_pats)
+
+    out[corrupt_mask < p_off] = out[corrupt_mask < p_off] ^ 1
     return out
-        
+
+
 ########################
 # GRADIENT CALCULATION #
 ########################
@@ -213,7 +208,7 @@ def train(train_data, loss_fn, loss_grad, output_rates, step_size,
         dK = 0
         for j in range(n):  
             template = train_data[:, j:j+1]
-            train_patterns = off_patterns(template, noise)
+            train_patterns = off_patterns(template, noise, 3)
             num_deviations = train_patterns.shape[1]
             for k in range(num_deviations):
                 pat = train_patterns[:, k:k+1] 
@@ -282,16 +277,16 @@ if __name__ == '__main__':
 
     # hyperparameters
     outs = np.full(num_nodes, 0.5)
-    step_size = 0.0001
+    step_size = 0.001
     iters = 1000
 
     if do_training:
         K, err_over_time, K_over_time = train(train_data, nll, dnll, outs, step_size, iters, 
-            epsilon=None, noise=0.1, report_every=100)
+            epsilon=0.01, noise=0.1, report_every=100)
 
         print (f'Training data:\n{train_data}')
         
-        plt.plot(np.arange(len(err_over_time)), err_over_time, label='Average error over dataset')
+        plt.plot(np.arange(len(err_over_time)), err_over_time, label='Error averaged over dataset')
 
         # track_i = 0
         # track_j = 1
@@ -300,15 +295,12 @@ if __name__ == '__main__':
         plt.legend()
         plt.show()
 
-# ADDED off by a proportion training data
-# ADDED check convergence by plotting change in rate matrix
-# ADDED stopping condition: gradient size in addition to number of iterations
-# ADDED make functions general/amenable to least squares implementation
-# TODO larger p_off in off_patterns gives more patterns. This gives the illusion of more training data.
+# FIXED to obtain corrupted images, instead corrupt each bit independently with probability p_off
+# FIXED larger p_off in off_patterns gives more patterns. This gives the illusion of more training data.
+# TODO Make error accumulation robust to number of nodes, etc. 
 # TODO write new tests for gradient, helper fns, loss fns, off_patterns, train
+# TODO fix k_out values
 # TODO weights tend to 0. why? do other hopfield networks/RBMs run into the same problem?
-# TODO why does error not go to 0 when rates are all 0
 # TODO better starting rate parameters in train
-# TODO fix ks* values
-# TODO add regularization
 # TODO adagrad? other step size optimizer?
+# TODO add regularization
