@@ -5,6 +5,7 @@ import math
 import warnings
 warnings.filterwarnings("error")
 
+
 ####################
 # HELPER FUNCTIONS #
 ####################
@@ -170,7 +171,7 @@ def dnll(pat, pred):
 ############
     
 def train(train_data, loss_fn, loss_grad, output_rates, step_size, 
-            iters, epsilon = None, noise = 0.1, report_every=0):
+            iters, epsilon = None, noise = 0.1, num_corruptions=1, report_every=0):
     """
     Trains a new network on given training patterns using batch gradient descent.
     Patterns with specified amount of noise are used as input to a simulated FRETnet, 
@@ -185,7 +186,10 @@ def train(train_data, loss_fn, loss_grad, output_rates, step_size,
         step_size (float): Multiplier for each gradient descent update.
         iters (int): Number of times to pass through the training data.
         epsilon (float): Size of gradient at which training should stop.
-        noise (float in [0,1]): Deviation of training patterns from the given train_data.
+        noise (float in [0,1]): Extend of deviation of training patterns 
+            from the given train_data.
+        num_corrupted (int): Num of corrupted patterns to generate 
+            from each template pattern. 
         report_every (int): If True, prints all rate arrays while training.
 
     Returns:
@@ -206,12 +210,14 @@ def train(train_data, loss_fn, loss_grad, output_rates, step_size,
     for i in range(iters):
         avg_err = 0
         dK = 0
+
         for j in range(n):  
             template = train_data[:, j:j+1]
-            train_patterns = off_patterns(template, noise, 3)
-            num_deviations = train_patterns.shape[1]
-            for k in range(num_deviations):
+            train_patterns = off_patterns(template, noise, num_corruptions)
+
+            for k in range(num_corruptions):
                 pat = train_patterns[:, k:k+1] 
+
                 # TODO Find a better way to deal with singular matrices
                 #       arising from all-zero patterns
                 pat[pat==0] = 0.1
@@ -221,7 +227,7 @@ def train(train_data, loss_fn, loss_grad, output_rates, step_size,
                 Ainv, pred = _forward_pass(K, pat, output_rates)
                 dL_dK = gradient(loss_grad, template, pred, Ainv, output_rates)
                 dK += dL_dK
-                avg_err += loss_fn(template, pred)/(n * num_deviations)
+                avg_err += loss_fn(template, pred)/(n * num_corruptions)
         
         new_K = K.copy()
         new_K -= step_size * dK
@@ -277,7 +283,7 @@ if __name__ == '__main__':
 
     # hyperparameters
     outs = np.full(num_nodes, 0.5)
-    step_size = 0.001
+    step_size = 0.01
     iters = 1000
 
     if do_training:
@@ -291,16 +297,23 @@ if __name__ == '__main__':
         # track_i = 0
         # track_j = 1
         # plt.plot(np.arange(len(K_over_time)), K_over_time[:, track_i, track_j], label=f'K_{track_i},{track_j}')
+        
+        print (nll(train_data[:, 1:2], _forward_pass(K, train_data[:, 1:2], outs)[1]))
+
 
         plt.legend()
         plt.show()
 
 # FIXED to obtain corrupted images, instead corrupt each bit independently with probability p_off
 # FIXED larger p_off in off_patterns gives more patterns. This gives the illusion of more training data.
-# TODO Make error accumulation robust to number of nodes, etc. 
+# FIXED Make error accumulation robust to number of nodes, etc. 
 # TODO write new tests for gradient, helper fns, loss fns, off_patterns, train
+# TODO add RMSE error fn
+# TODO compare error of gradient descent to hebbian training
+
 # TODO fix k_out values
 # TODO weights tend to 0. why? do other hopfield networks/RBMs run into the same problem?
 # TODO better starting rate parameters in train
 # TODO adagrad? other step size optimizer?
 # TODO add regularization
+# cd Documents/'0 mit'/'year 1'/urop/dna-ml/'jberlean simulator'/FRETNET2/FRETNET
