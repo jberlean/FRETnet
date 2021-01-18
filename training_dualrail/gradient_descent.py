@@ -1,3 +1,4 @@
+import os, sys
 import itertools as it
 import pickle
 import math, random
@@ -10,8 +11,9 @@ import scipy.special
 import warnings
 warnings.filterwarnings("error")
 
-#DO_TRAINING = False
-#DO_ANALYSIS = True
+# INTRAPACKAGE IMPORTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+from objects import utils
 
 
 ####################
@@ -359,16 +361,25 @@ def train_dr(stored_data, loss_func, duplication = 5, noise = 0.1, seed = None):
 #    K_min = np.reshape(resbrute, (num_nodes, num_nodes))
 #    return K_min
 
+def rates_to_network(K_fret, k_out, k_in):
+    num_nodes = len(k_out)
+    nodes = [utils.InputNode('node{}'.format(i), production_rate=k_in_i, emit_rate=k_out_i) for i,(k_out_i,k_in_i) in enumerate(zip(k_out, k_in))]
+    for i,j in it.product(range(num_nodes), range(num_nodes)):
+        if i==j:  continue
+        nodes[j].add_input(nodes[j], K_fret[i,j])
+
+    return utils.Network(nodes)
+
 if __name__ == '__main__':
 
-    num_nodes = 4
+    num_nodes = 3
     num_patterns = 2
-    stored_data_ints = random.sample(range(2**num_nodes), num_patterns)
-    stored_data = [
-        np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
-        for i in stored_data_ints
-    ]
-#    stored_data = list(map(np.array, [[-1,-1,1],[1,-1,-1]]))
+#    stored_data_ints = random.sample(range(2**num_nodes), num_patterns)
+#    stored_data = [
+#        np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
+#        for i in stored_data_ints
+#    ]
+    stored_data = list(map(np.array, [[-1,1,1],[1,-1,-1]]))
 
 
     print('Training data:', stored_data)
@@ -382,13 +393,20 @@ if __name__ == '__main__':
         pre = '*' if list(d) in map(list, stored_data) else ' '
         print(pre, d.flatten(), calc_network_output_dr(d, trained_K_fret, trained_k_out)[0].flatten())
 
+    # generate Network object with these connections
+    k_in = np.array([
+        kin for bit in stored_data[0] for kin in (max(bit, 0), -min(bit, 0))
+    ])
+    trained_network = rates_to_network(trained_K_fret, trained_k_out, k_in)
+
     output = {
       'num_nodes': num_nodes,
       'num_patterns': num_patterns,
       'stored_data': stored_data,
       'trained_K_fret': trained_K_fret,
       'trained_k_out': trained_k_out,
-      'scipy_output': res
+      'scipy_output': res,
+      'trained_network': trained_network
     }
 
     with open('output_nodes={}_pat={}.p'.format(num_nodes, num_patterns),'wb') as outfile:

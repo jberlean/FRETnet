@@ -1,6 +1,9 @@
 import sys
 
-import utils
+# INTRAPACKAGE IMPORTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+from objects import utils
+
 import gui
 
 x_ON = sys.argv[1].upper() == 'ON'
