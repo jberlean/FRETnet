@@ -1,4 +1,4 @@
-import sys
+import sys,os
 
 # INTRAPACKAGE IMPORTS
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path

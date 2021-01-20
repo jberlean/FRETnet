@@ -1,4 +1,4 @@
-import sys
+import sys, os
 import itertools as it
 
 import numpy as np
