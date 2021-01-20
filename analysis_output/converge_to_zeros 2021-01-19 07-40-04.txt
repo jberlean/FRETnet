@@ -1,0 +1,120 @@
+Training Data:
+[[0 1]
+ [0 0]
+ [1 1]]
+Trained weights:
+[[0. 0. 0.]
+ [0. 0. 0.]
+ [0. 0. 0.]]
+Searched weights:
+[[0.  0.  0.2]
+ [0.  0.  0. ]
+ [0.2 0.  0. ]]
+
+Training Data:
+[[1 0]
+ [1 0]
+ [0 0]]
+Trained weights:
+[[0.         0.44205909 0.        ]
+ [0.44205909 0.         0.        ]
+ [0.         0.         0.        ]]
+Searched weights:
+[[0.  0.6 1. ]
+ [0.6 0.  0.2]
+ [1.  0.2 0. ]]
+
+Training Data:
+[[0 0]
+ [1 1]
+ [0 1]]
+Trained weights:
+[[0. 0. 0.]
+ [0. 0. 0.]
+ [0. 0. 0.]]
+Searched weights:
+[[0.  0.6 0. ]
+ [0.6 0.  1. ]
+ [0.  1.  0. ]]
+
+Training Data:
+[[1 0]
+ [1 0]
+ [1 0]]
+Trained weights:
+[[0.         0.52096462 0.50568686]
+ [0.52096462 0.         0.46716558]
+ [0.50568686 0.46716558 0.        ]]
+Searched weights:
+[[0.  1.  0.4]
+ [1.  0.  0. ]
+ [0.4 0.  0. ]]
+
+Training Data:
+[[0 1]
+ [0 0]
+ [0 1]]
+Trained weights:
+[[0.         0.         0.38398334]
+ [0.         0.         0.        ]
+ [0.38398334 0.         0.        ]]
+Searched weights:
+[[0.  0.  0.2]
+ [0.  0.  0.2]
+ [0.2 0.2 0. ]]
+
+Training Data:
+[[0 0]
+ [1 1]
+ [1 0]]
+Trained weights:
+[[0. 0. 0.]
+ [0. 0. 0.]
+ [0. 0. 0.]]
+Searched weights:
+[[0.  0.6 0.2]
+ [0.6 0.  1. ]
+ [0.2 1.  0. ]]
+
+Training Data:
+[[1 0]
+ [1 0]
+ [0 1]]
+Trained weights:
+[[0.        0.4579681 0.       ]
+ [0.4579681 0.        0.       ]
+ [0.        0.        0.       ]]
+Searched weights:
+[[0.  0.8 0. ]
+ [0.8 0.  0.2]
+ [0.  0.2 0. ]]
+
+Training Data:
+[[1 0]
+ [1 1]
+ [0 0]]
+Trained weights:
+[[0. 0. 0.]
+ [0. 0. 0.]
+ [0. 0. 0.]]
+Searched weights:
+[[0.  0.  0.4]
+ [0.  0.  0.2]
+ [0.4 0.2 0. ]]
+
+Training Data:
+[[1 0]
+ [1 1]
+ [0 1]]
+Trained weights:
+[[0. 0. 0.]
+ [0. 0. 0.]
+ [0. 0. 0.]]
+Searched weights:
+[[0.  0.2 0.6]
+ [0.2 0.  0. ]
+ [0.6 0.  0. ]]
+
+5/9 training runs resulted in all zeros
+0/9 grid searches found optimum to be all zeros
+Training and grid searching disagreed on 5/9 param sets
