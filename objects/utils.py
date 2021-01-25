@@ -170,6 +170,10 @@ class Network(object):
 
     self._time = 0.0
 
+  @property
+  def nodes(self):
+    return self._nodes[:]
+
   def choose_reaction(self):
     node_propensities = np.array([n.propensity() for n in self._nodes])
     propensity = node_propensities.sum()

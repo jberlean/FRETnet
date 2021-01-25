@@ -1,7 +1,7 @@
 import os, sys
 import itertools as it
 import pickle
-import math, random
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -36,11 +36,42 @@ def off_patterns(pat, p_off, num_pats):
     """
     d = len(pat)
 
-    corrupt_mask = np.random.default_rng().random((num_pats, d))
+    corrupt_mask = RNG.random((num_pats, d))
     out = np.tile(pat, (num_pats,1))
 
     out[corrupt_mask < p_off] = -out[corrupt_mask < p_off]
     return [out[i,:] for i in range(num_pats)]
+
+def Ainv_from_rates(K_fret, k_out, k_in):
+    """
+    Computes and returns the inverse of the A matrix, given the rate parameters for the network.
+
+    Args:
+    Returns:
+    """
+    num_nodes = len(k_in)
+
+    if K_fret[range(num_nodes), range(num_nodes)].any():
+        raise ValueError(f'diagonal terms not 0 in the rate matrix: \n {K_fret}')
+
+    A = -K_fret
+    diagonal_terms = K_fret.sum(axis=1) + k_in + k_out
+    A[range(num_nodes), range(num_nodes)] = diagonal_terms
+
+    try:
+        Ainv = np.linalg.inv(A)
+    except:
+        raise ValueError(f'Singular matrix for rates={K_fret}, inputs={k_in}, outputs={k_out}')
+
+    return Ainv
+
+def k_in_from_input_data(input_data):
+    k_in_sr = np.array([
+        kin for bit in input_data for kin in (max(bit, 0), -min(bit, 0))
+    ])
+    return k_in_sr
+
+
 
 ##################
 # LOSS FUNCTIONS #
@@ -63,7 +94,7 @@ def drmse(pat, pred):
 # GRADIENT CALCULATION #
 ########################
 
-def calc_network_output_sr(rate_matrix, input_rates, output_rates):
+def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
     """
     Computes the single-rail network output given all rate parameters (k_in, k_out, k_ij).
     The single-rail network output is the output fluorescence from each node, given by p_i * k^i_out.
@@ -75,32 +106,20 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates):
             Should be length-n 1d array, for network of n nodes.
         output_rates (np.array): The intrinsic emission rate constants of each node (k_out). 
             Should be a length-n 1d array, for network of n nodes.
+        Ainv (np.array): [optional] The precomputed inverse A matrix. If not given, will be computed.
+            Should be a square nxn matrix.
     
     Returns:
-        Ainv (np.array): The inverse of the matrix representing the linear system of equations.
-            Should be square.
         pred (np.array): The predicted values of each node's output.
     """
-    num_nodes = len(input_rates)
-
-    if rate_matrix[range(num_nodes), range(num_nodes)].any():
-        raise ValueError(f'diagonal terms not 0 in the rate matrix: \n {rate_matrix}')
-
-    A = -rate_matrix
-    diagonal_terms = rate_matrix.sum(axis=1) + input_rates.T + output_rates.T
-    A[range(num_nodes), range(num_nodes)] = diagonal_terms
-
-    try:
-        Ainv = np.linalg.inv(A)
-    except:
-        raise ValueError(f'Singular matrix for rates={rate_matrix}, inputs={input_rates}, outputs={output_rates}')
+    if Ainv is None:  Ainv = Ainv_from_rates(rate_matrix, output_rates, input_rates)
 
     pred = Ainv @ input_rates
 #    print(pred)
 #    print(output_rates)
-    return Ainv, pred * output_rates
+    return pred * output_rates
 
-def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr):
+def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv = None):
     """
     Computes the dual-rail network output given an input pattern and parameters of the single-rail system
     (k_ij and k_out). The intrinsic excitation rate constants for the single-rail system are derived
@@ -117,31 +136,29 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr):
             Should be a square and symmetric 2nx2n matrix, with diagonal entries equal to 0.
         output_rates_sr (np.array): The intrinsic emission rate constants of each node in the single-rail system (k_out).
             Should be a length-2n 1d nonnegative array
+        Ainv (np.array): [optional] The precomputed inverse A matrix, which may be given as an optimization. 
+            If not given, will be computed. Should be a square nxn matrix.
 
     Returns:
         output_dr (np.array): The dual-rail outputs, defined as the difference between the output fluorescence from
             each dual-rail node's + and - fluorophores in the single-rail network. Should be length-n 1d array.
         output_sr (np.array): The single-rail outputs, defined as the output fluorescence from each single-rail node.
             Should be a length-2n 1d array.
-        Ainv (np.array): The inverse A matrix computed during calculation of the single-rail output. Returned as an
-            optimization because it is used for other operations. Should be square and symmetric.
         
     """
     num_nodes_dr = len(input_pattern)
     num_nodes_sr = 2*num_nodes_dr
 
     # Determine equivalent single-rail input rates based on dual-rail input pattern
-    input_rates_sr = np.array([
-        kin for bit in input_pattern for kin in (max(bit, 0), -min(bit, 0))
-    ])
+    input_rates_sr = k_in_from_input_data(input_pattern)
 
-    Ainv, output_sr = calc_network_output_sr(rate_matrix_sr, input_rates_sr, output_rates_sr)
+    output_sr = calc_network_output_sr(rate_matrix_sr, input_rates_sr, output_rates_sr, Ainv = Ainv)
 
     output_dr = output_sr[range(0, num_nodes_sr, 2)] - output_sr[range(1, num_nodes_sr, 2)]
 #    print(output_sr)
 #    print(output_dr)
 
-    return output_dr, output_sr, Ainv
+    return 100*output_dr, output_sr
     
 
 # note: not yet modified for use with dual-rail
@@ -290,14 +307,45 @@ def gradient(loss_grad, pat, pred, Ainv, output_rates, verbose=False):
 #
 #    return K, err_over_time, K_over_time
 
-def train_dr(stored_data, loss_func, duplication = 5, noise = 0.1, seed = None):
+def train_dr_hebbian(stored_data):
+    num_nodes_dr = len(stored_data[0])
+    num_nodes_sr = 2*num_nodes_dr
+
+    K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
+    for d in stored_data:
+        for i,j in it.combinations(range(num_nodes_dr), 2):
+            i_p = 2*i
+            i_n = 2*i+1
+            j_p = 2*j
+            j_n = 2*j+1
+            if (d[i],d[j]) == (1,1):
+                K_fret[i_p,j_p] += 1
+            elif (d[i],d[j]) == (1,-1):
+                K_fret[i_p,j_n] += 1
+            elif (d[i],d[j]) == (-1,1):
+                K_fret[i_n,j_p] += 1
+            elif (d[i],d[j]) == (-1,-1):
+                K_fret[i_n,j_n] += 1
+    K_fret = K_fret + K_fret.T
+
+    k_out = np.ones(num_nodes_sr)
+
+    print(K_fret)
+
+    return K_fret, k_out
+
+def train_dr(stored_data, loss_func, duplication = 5, noise = 0.1, init = 'random', seed = None):
+    def rates_to_params(K_fret, k_out):
+        idxs = np.triu_indices(num_nodes_sr, 1)
+        params = np.concatenate((K_fret[idxs], k_out))
+        return params
     def params_to_rates(p):
         K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
         for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)):
             K_fret[i,j] = p[idx]
             K_fret[j,i] = p[idx]
-#        k_out = 10*np.ones((num_nodes_sr, 1)) # use this line for fixed, uniform k_out
-#        k_out = p[-1]*np.ones((num_nodes_sr, 1)) # use this line for optimized, uniform k_out
+#        k_out = 10*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
+#        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
         k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out
 
@@ -312,7 +360,14 @@ def train_dr(stored_data, loss_func, duplication = 5, noise = 0.1, seed = None):
 #        return resid.flatten()
 
         resid = np.array([
-            loss_func(calc_network_output_dr(input_data,K_fret,k_out)[0],output_data_cor) 
+            loss_func(
+                calc_network_output_dr(
+                    input_data,
+                    K_fret,
+                    k_out
+                )[0],
+                output_data_cor
+            ) 
             for input_data,output_data_cor in train_data
         ])
 
@@ -327,9 +382,19 @@ def train_dr(stored_data, loss_func, duplication = 5, noise = 0.1, seed = None):
     ]
 
     num_params = num_nodes_sr*(num_nodes_sr-1)//2 + num_nodes_sr
-    init_params = np.random.uniform(1, 10, num_params)
-#    init_params = np.ones(num_params)
-    res = scipy.optimize.least_squares(loss_func_scipy, init_params, bounds=(0,10**5), jac='3-point')
+
+    if init == 'one':
+        init_params = np.ones(num_params)
+    elif init == 'zero':
+      init_params = np.zeros(num_params)
+    elif init == 'hebbian':
+      init_params = 5*rates_to_params(*train_dr_hebbian(stored_data)) + 1
+    else:
+        init_params = RNG.uniform(.01, 1, num_params)
+    print(params_to_rates(init_params))
+    res = scipy.optimize.least_squares(loss_func_scipy, init_params, bounds=(0,1), jac='3-point')
+
+    print(res)
 
     return (*params_to_rates(res.x), res)
     
@@ -372,19 +437,29 @@ def rates_to_network(K_fret, k_out, k_in):
 
 if __name__ == '__main__':
 
+    if not os.path.exists('tmp'):
+      os.mkdir('tmp')
+
+    SEED = np.random.randint(0,10**6)
+#    SEED = 67331
+    RNG = np.random.default_rng(SEED)
+    print(f'SEED: {SEED}')
+
     num_nodes = 3
     num_patterns = 2
-#    stored_data_ints = random.sample(range(2**num_nodes), num_patterns)
+#    stored_data_ints = RNG.permutation(2**num_nodes)[:num_patterns]
 #    stored_data = [
 #        np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
 #        for i in stored_data_ints
 #    ]
-    stored_data = list(map(np.array, [[-1,1,1],[1,-1,-1]]))
+    stored_data = list(map(np.array, [[-1,-1,1],[1,-1,-1]]))
+    init_method = 'random'
 
 
     print('Training data:', stored_data)
 
-    trained_K_fret, trained_k_out, res = train_dr(stored_data, rmse, duplication=5)
+
+    trained_K_fret, trained_k_out, res = train_dr(stored_data, rmse, noise = 0.1, duplication=5, init=init_method)
 
     # this output is probably too much for bigger networks
     for i in range(2*num_nodes):
@@ -400,6 +475,8 @@ if __name__ == '__main__':
     trained_network = rates_to_network(trained_K_fret, trained_k_out, k_in)
 
     output = {
+      'seed': SEED,
+      'init_method': init_method,
       'num_nodes': num_nodes,
       'num_patterns': num_patterns,
       'stored_data': stored_data,
@@ -409,5 +486,5 @@ if __name__ == '__main__':
       'trained_network': trained_network
     }
 
-    with open('output_nodes={}_pat={}.p'.format(num_nodes, num_patterns),'wb') as outfile:
+    with open(f'tmp/output_nodes={num_nodes}_pat={num_patterns}_seed={SEED}.p','wb') as outfile:
       pickle.dump(output, outfile)
