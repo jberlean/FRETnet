@@ -1,9 +1,12 @@
-import sys
+import sys, os
 import itertools as it
 
 import numpy as np
 
-import utils
+# INTRAPACKAGE IMPORTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+from objects import utils
+
 import gui
 
 def generate_RBM_network(num_nodes, rate_matrix, input_rates, output_rates):

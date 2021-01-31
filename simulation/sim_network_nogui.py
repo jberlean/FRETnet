@@ -1,9 +1,11 @@
 import time
-import sys
+import sys,os
 
 import numpy as np
 
-import utils
+# INTRAPACKAGE IMPORTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+from objects import utils
 
 x_ON = sys.argv[1].upper() == 'ON'
 y_ON = sys.argv[2].upper() == 'ON'

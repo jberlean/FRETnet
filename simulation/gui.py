@@ -2,7 +2,9 @@ import time
 
 import tkinter as tk
 
-import utils
+# INTRAPACKAGE IMPORTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+from objects import utils
 
 class Simulator(tk.Frame):
   def __init__(self, master=None, nodes = [], node_pos = []):
