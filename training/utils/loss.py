@@ -11,10 +11,10 @@ class LossFunc():
 class RMSE(LossFunc):
     @staticmethod
     def fn(pat, pred):
-        return np.mean((pat - pred) ** 2) ** 0.5
-    @classmethod
-    def grad(cls, pat, pred):
-        return ( 1/cls.fn(pat, pred) * 1/len(pat) * (pred - pat) ).T
+        return np.mean((pat-pred)**2) ** 0.5
+    @staticmethod
+    def grad(pat, pred):
+        return ( np.mean((pat-pred)**2)**-0.5 * 1/len(pat) * (pred-pat) ).T
         
 class NLL(LossFunc):
     @staticmethod

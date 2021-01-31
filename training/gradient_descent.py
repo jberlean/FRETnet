@@ -69,10 +69,6 @@ def gradient(loss, pat, pred, Ainv, verbose=False):
     else:
         return reshaped_dL_dK
     
-############
-# TRAINING #
-############
-    
 def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, noise=0.1, num_corrupted=1, report_freq=0):
     """
     Trains a new network on given training patterns using batch gradient descent.
@@ -91,7 +87,7 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         noise (float [0,1]): Extend of deviation of training patterns 
             from the given train_data.
         num_corrupted (int): Num of corrupted patterns to generate 
-            from each template pattern. 
+            from each template pattern, per training iter. 
         report_freq (int): Rate matrix is printed every iteration multiple of this param.
             If 0, rate matrix is never printed.
 
@@ -103,7 +99,7 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
             Should have length n.
     """
     d, n = train_data.shape
-    K = np.random.rand(d, d) / 10 + 0.45  # weights initialized at 0.5 +/- 0.05
+    K = np.random.randn(d, d) / 10 + 0.5  # weights initialized normally around 0.5
     
     K = (K + K.T) / 2  # ensure starting weights are symmetric
     np.fill_diagonal(K, 0)
@@ -120,21 +116,18 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
 
             for k in range(num_corrupted):
                 pat = train_patterns[:, k:k+1].astype(float) # ensure float
-                
-                pat[pat==0] = 0.1
 
                 # Compute the prediction based on the off patterns,
                 # But evaluate error relative to original template pattern.
                 Ainv = Ainv_from_rates(K, pat, output_rates)
                 pred = Ainv @ pat
-                # print(f'pat: \n{pat} \n pred: \n{pred}')
                 dL_dK = gradient(loss, template, pred, Ainv, output_rates)
                 dK += dL_dK
                 avg_err += loss.fn(template, pred)/(n * num_corrupted)
         
         new_K = K.copy()
         new_K -= step_size * dK
-        new_K[new_K<0] = 0 # NOTE ReLU; ensures all weights are positive.
+        new_K[new_K<0] = 0 # ReLU; ensures all weights nonnegative.
         err_over_time.append(avg_err)
         K_over_time = np.append(K_over_time, new_K.reshape(1, d, d), axis=0)
 

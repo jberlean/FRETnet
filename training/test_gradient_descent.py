@@ -1,13 +1,13 @@
 import pytest
 import sys, os
 import numpy as np
-import matplotlib.pyplot as plt
 import scipy.optimize as so
 
 # INTRAPACKAGE IMPORTS
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
 import training.gradient_descent as srgd
 from training.utils.loss import RMSE, NLL
+from training.utils.helpers import Ainv_from_rates
 
 ####################
 # HELPER FUNCTIONS #
@@ -44,38 +44,9 @@ def test_off_patterns():
     assert np.allclose([x / iters for x in (off_zeros, off_ones)], [0.1, 0.9], rtol=2e-2, atol = 1e-3)
 
 
-##################
-# LOSS FUNCTIONS #
-##################
-
-def test_gradient_nll_small():
-    rates = np.array([[0., 1],[1, 0]])
-    inps = np.array([[1.,0]]).T
-    outs = np.full((2, 1), 0.5)
-    
-    Ainv = srgd.Ainv_from_rates(rates, inps, outs)
-    pred = Ainv @ inps
-    grads = srgd.gradient(NLL, inps, pred, Ainv, verbose=True)
-    expected = {
-        'Ainv': np.array([[0.54545455, 0.36363636],
-            [0.36363636, 0.90909091]]), 
-        'pred': np.array([[0.54545455],
-            [0.36363636]]),
-        'dL_dpred': np.array([[-1.83333333,  1.57142857]]), 
-        'dpred_dAinv': np.array([[1., 0., 0., 0.],
-            [0., 1., 0., 0.]]), 
-        'dAinv_dA': -np.array([[0.29752066, 0.19834711, 0.19834711, 0.1322314 ],
-            [0.19834711, 0.49586777, 0.1322314 , 0.33057851],
-            [0.19834711, 0.1322314 , 0.49586777, 0.33057851],
-            [0.1322314 , 0.33057851, 0.33057851, 0.82644628]]), 
-        'dA_dK': np.array([[1.],
-            [-1.],
-            [-1.],
-            [1.]]), 
-        'reshaped_dL_dK': np.array([[ 0.        , 0.21645022],
-            [0.21645022,  0.        ]])}
-    for k in expected:
-        assert np.allclose(grads[k], expected[k])
+#################
+# GRADIENT CALC #
+#################
 
 def test_forward_pass_small():
     rates = np.array([[0., 1],[1, 0]])
@@ -88,10 +59,9 @@ def test_forward_pass_small():
 def gradtest_random_helper(loss): 
     # checks the gradient at the [1,0] node (had trouble trying to check all nodes).
     for d in range(2,10):
-        K = np.random.rand(d, d) / 10 + 0.45  # weights initialized at 0.5 +/- 0.05
+        K = np.random.randn(d, d) / 10 + 0.5  # weights initialized normally around 0.5
         K = (K + K.T) / 2  # ensure starting weights are symmetric
         np.fill_diagonal(K, 0) # and diagonal terms are zero
-
         inps = np.random.randint(2, size=(d, 1))
         outs = np.full((d, 1), 0.5)
 
@@ -99,57 +69,33 @@ def gradtest_random_helper(loss):
             rates = K.copy()
             rates[1,0] = x[0]
             rates[0,1] = x[0]
-            _, pred = srgd._forward_pass(rates, inps, outs)
+            Ainv = Ainv_from_rates(rates, inps, outs)
+            pred = Ainv @ inps
             return loss.fn(inps, pred)
         
         def grad(x):
             rates = K.copy()
-            rates[1,0] = x[0]
-            rates[0,1] = x[0]
-            Ainv, pred = srgd._forward_pass(rates, inps, outs)
+            rates[1,0] = x
+            rates[0,1] = x
+            Ainv = Ainv_from_rates(rates, inps, outs)
+            pred = Ainv @ inps
             grad_array = srgd.gradient(loss, inps, pred, Ainv)
             return grad_array
 
+        epsilon = 1e-8
+        testval = np.random.rand()
+        numgrad = so.approx_fprime([testval], func, epsilon)
+        angrad = grad(testval)[1,0]
+
+
+        mse = np.mean((numgrad - angrad)**2)
+        assert mse < 1e-8
 def test_gradient_nll_random():
     gradtest_random_helper(NLL)
 
-def test_gradient_mse_random():
+def test_gradient_rmse_random():
     gradtest_random_helper(RMSE)
 
-# def grad(x, lg):
-#     rates = K.copy()
-#     rates[1,0] = x[0]
-#     rates[0,1] = x[0]
-#     Ainv, pred = _forward_pass(rates, inps, outs)
-#     grad_array = gradient(lg, inps, pred, Ainv, outs)
-#     return grad_array
-
-# K = np.array([[0., 1],[1, 0]])
-# inps = np.array([[1.,0]]).T
-# outs = np.full((2, 1), 0.5)
-
-        # def func(x0): 
-        #     _, pred = srgd._forward_pass(x0, inps, outs)
-        #     return srgd.nll(inps, pred)
-
-        # def grad(x0):
-        #     Ainv, pred = srgd._forward_pass(x0, inps, outs)
-        #     grad_array = srgd.gradient(srgd.dnll, inps, pred, Ainv)
-        #     return grad_array
-        
-        # epsilon = np.full((d,d), 1e-8)
-        # np.fill_diagonal(epsilon, 0)
-
-        # epsilon = 1e-10
-        # testval = np.random.rand()
-        # numgrad = so.approx_fprime([testval], func, epsilon)
-        # print(f'numgrad: \n{numgrad}')
-
-        # angrad = grad([testval])[1,0]
-        # print(f'angrad: \n{angrad}')
-
-        # mse = np.mean((numgrad - angrad)**2)
-        # assert mse < 1e-8
 
 
 def test_training_update():
@@ -157,5 +103,3 @@ def test_training_update():
 
 if __name__ == '__main__':
     pass
-
-#TODO take small step for single variable in direction of gradient
