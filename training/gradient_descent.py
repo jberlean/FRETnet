@@ -7,9 +7,10 @@ import warnings
 from datetime import datetime
 from tqdm import tqdm
 warnings.filterwarnings("error")
+from .utils.loss import NLL
 
 DO_TRAINING = False
-DO_ANALYSIS = True
+DO_ANALYSIS = False
 
 
 
