@@ -39,21 +39,3 @@ class NLL(LossFunc):
             else:
                 raise ValueError()
         return out
-
-
-def nll(pat, pred):
-    """
-    Negative Log Loss, evaluated elementwise and then summed over two arrays of the same shape.
-    """
-    pass
-
-
-def rmse(pat, pred):
-    """
-    Root Mean Square Error function.
-    """
-
-def drmse(pat, pred):
-    """
-    Analytical gradient of RMSE, elementwise.
-    """

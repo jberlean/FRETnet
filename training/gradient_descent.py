@@ -29,8 +29,8 @@ def gradient(loss, pat, pred, Ainv, verbose=False):
             Ainv, pred, dL_dpred, dpred_dAinv, dAinv_dA, dA_dK, dL_dK
 
     Returns: 
-        A dict of all the quantities computed, if verbose is True.
-        dL_dK (np.array): The gradient of the loss with respect to the weights of the network.
+        if verbose: A dict of all the quantities computed
+        else: dL_dK (np.array): The gradient of the loss with respect to the weights of the network.
             Should be a dxd matrix, reshaped from 1xd^2.
 
     """
@@ -120,9 +120,6 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
 
             for k in range(num_corrupted):
                 pat = train_patterns[:, k:k+1].astype(float) # ensure float
-
-                # TODO Find a better way to deal with singular matrices
-                #       arising from all-zero patterns
                 
                 pat[pat==0] = 0.1
 
@@ -157,9 +154,22 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
 
     return K, err_over_time, K_over_time
 
-def grid_search(num_nodes, pats, outs, loss_fn, k_domain, resolution=3, noise=0.1, verbose=True):
+def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise=0.1):
     """
-    Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss_fn.
+    Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss.
+
+    Args:
+        num_nodes (int)
+        pats (np.array): a column array, template of num_nodes bits.
+        outs (np.array): a column array, the intrinsic outputs for each node.
+        loss (class<training.utils.LossType>)
+        k_domain (2-tuple): the domain of rates to search in.
+        resolution: number of points to sample in the domain. 
+            ex: k_domain=(0,1), resolution=3 -> [0, 0.5, 1]
+        noise: probability of each input bit being corrupted during evaluation.
+
+    Returns:
+        K_min (np.array): the rates producing the lowest loss.
     """
     triu_idx = np.triu_indices(num_nodes, 1)
     num_cols = pats.shape[1]
@@ -169,7 +179,6 @@ def grid_search(num_nodes, pats, outs, loss_fn, k_domain, resolution=3, noise=0.
         K += K.T
 
         loss_sum = 0
-
         for c in range(num_cols):
             pat = pats[:, c:c+1]
             Ainv = Ainv_from_rates(K, pat, outs)
@@ -178,8 +187,7 @@ def grid_search(num_nodes, pats, outs, loss_fn, k_domain, resolution=3, noise=0.
             off_pats = off_patterns(pat, noise, num_corrupted)
             for i in range(num_corrupted):
                 off_pat = off_pats[:, i:i+1]
-                loss_sum += loss_fn(off_pat, pred)
-        #TODO handle all zeros in off_pat
+                loss_sum += loss.fn(off_pat, pred)
         return loss_sum
     
     k_ranges = [tuple(k_domain) for _ in range(choose(num_nodes, 2))]
