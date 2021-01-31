@@ -6,6 +6,7 @@ class LossFunc():
         pass
     def grad(pat, pred):
         pass
+    
 
 class RMSE(LossFunc):
     @staticmethod
