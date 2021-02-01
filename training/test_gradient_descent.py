@@ -90,15 +90,14 @@ def gradtest_random_helper(loss):
 
         mse = np.mean((numgrad - angrad)**2)
         assert mse < 1e-8
+
 def test_gradient_nll_random():
     gradtest_random_helper(NLL)
 
 def test_gradient_rmse_random():
     gradtest_random_helper(RMSE)
 
-
-
-def test_training_update():
+def test_training_matches_gd():
     pass
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@ class RMSE(LossFunc):
         return np.mean((pat-pred)**2) ** 0.5
     @staticmethod
     def grad(pat, pred):
-        return ( np.mean((pat-pred)**2)**-0.5 * 1/len(pat) * (pred-pat) ).T
+        return np.zeros(pat.shape).T if (pred == pat).all() else ( np.mean((pat-pred)**2)**-0.5 * 1/len(pat) * (pred-pat) ).T
         
 class NLL(LossFunc):
     @staticmethod

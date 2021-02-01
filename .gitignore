@@ -1,2 +1,7 @@
 # python auxiliary files
 *.pyc
+__pycache__
+
+.venv
+.vscode
+.pytest_cache

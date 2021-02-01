@@ -121,7 +121,7 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
                 # But evaluate error relative to original template pattern.
                 Ainv = Ainv_from_rates(K, pat, output_rates)
                 pred = Ainv @ pat
-                dL_dK = gradient(loss, template, pred, Ainv, output_rates)
+                dL_dK = gradient(loss, template, pred, Ainv)
                 dK += dL_dK
                 avg_err += loss.fn(template, pred)/(n * num_corrupted)
         
@@ -137,7 +137,7 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
                 print(f'Stopped at iteration {i+1}\n'
                         f'K: {new_K}\n'
                         f'error: {avg_err}\n'
-                        f'< epsilon: {np.linalg.norm(new_K - K)}')
+                        f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
             return new_K, err_over_time, K_over_time
     
         if report_freq and (i) % report_freq == 0:
@@ -196,16 +196,16 @@ if __name__ == '__main__':
     num_nodes = 5
     num_patterns = 4
     train_data = np.random.randint(2, size=(num_nodes, num_patterns))
-    DO_TRAINING = False
+    DO_TRAINING = True
     DO_ANALYSIS = False
     # hyperparameters
     outs = np.full(num_nodes, 0.5)
-    step_size = 0.001
+    step_size = 1e-4
     max_iters = int(100 / step_size)
 
     if DO_TRAINING:
         K, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
-            epsilon=0.001 * step_size, noise=0.1, report_freq=250)
+            epsilon=0.001 * step_size, noise=0.01, num_corrupted=3, report_freq=250)
 
         print (f'Training data:\n{train_data}')
         
@@ -225,8 +225,8 @@ if __name__ == '__main__':
         max_iters = int(100 / step_size)
         max_nodes = 5
         loss = RMSE
-        start_time = str(datetime.utcnow())[:19].replace(':', '-')
-        with open(f'analysis_output/converge_to_zeros {start_time}.txt', 'w') as f:
+        start_time = str(datetime.utcnow())[:19].replace(':', '-').replace(' ', '_')
+        with open(f'analysis_output/converge-to-zeros_{start_time}.out', 'w') as f:
             diff_ct, trained_ct, searched_ct = 0, 0, 0
             for num_nodes in range(3, max_nodes + 1, 2):
                 for num_patterns in range(2, num_nodes, 2):
@@ -262,10 +262,13 @@ if __name__ == '__main__':
 
 # ADDED tests for helper fns, gradient
 # ADDED RMSE error fn
+# SOLVED look into volatility of RMSE gd
+# DONE update docstrings
+# TODO Change epsilon stopping condition to use running avg
+# TODO effect of num_corrupted
+# TODO nll?
+# TODO refine grid search; effect of noise?
 # TODO RECORD check that gd still converges to all zeros if greater noise (USE BOTH ERROR FNS)
-# TODO RECORD grid search on rate matrix + amt of noise for nontrivial global error min 
-# TODO look into volatility of RMSE gd
-# TODO update docstrings
 # todo Optimize k_out thru gradient descent
 # TODO dual-rail
 # TODO complex optimization packages
