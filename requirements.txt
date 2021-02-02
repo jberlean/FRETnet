@@ -3,7 +3,7 @@ async-generator==1.10
 atomicwrites==1.4.0
 attrs==20.3.0
 backcall==0.2.0
-bleach==3.2.3
+bleach==3.3.0
 cffi==1.14.4
 colorama==0.4.4
 cycler==0.10.0
