@@ -1,9 +1,10 @@
 import os, sys
 import itertools as it
-import pickle
+import pickle, dill
 import math
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import brute
 import scipy.special
@@ -406,7 +407,7 @@ def train_dr(train_data, loss_func, init = 'random', seed = None):
 
     return (*params_to_rates(res.x), 2*res.cost, res)
     
-def train_dr_MC(train_data, loss_func, init = 'random', seed = None):
+def train_dr_MC(train_data, loss_func, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -452,54 +453,29 @@ def train_dr_MC(train_data, loss_func, init = 'random', seed = None):
 
     num_params = num_nodes_sr*(num_nodes_sr-1)//2 + num_nodes_sr
 
-    if init == 'one':
-        init_params = np.ones(num_params)
-    elif init == 'zero':
-      init_params = np.zeros(num_params)
-#    elif init == 'hebbian':
-#      init_params = 5*rates_to_params(*train_dr_hebbian(stored_data)) + 1
-    else:
-      init_params = rng.uniform(1, 10**5, num_params)
+    if anneal_protocol is None:
+      anneal_protocol = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
+    accept_hist_len = 50
+
+    init_params = rng.uniform(low_bound, high_bound, num_params)
 #    print(params_to_rates(init_params))
 
     params_cur = init_params
     f_cur = np.sum(loss_func_scipy(params_cur)**2)
-    params_hist = []
-    noise = 2
-    goal_accept_rate = .3
-    accept_hist_len = 50
-    accept_hist = [0]
-#    for T in np.arange(.1, 0, -.001):
-#      for idx in range(num_params):
-#        params_new = params_cur.copy()
-#        params_new[idx] = np.exp(np.log(params_cur[idx]) + rng.normal(0, noise))
-#  #      params_new = params_cur + rng.uniform(0, noise)
-#        while np.any(params_new > 10**5) or np.any(params_new < 0):
-#          params_new[idx] = np.exp(np.log(params_cur[idx]) + rng.normal(0, noise))
-#  #        params_new = params_cur + rng.uniform(0, noise)
-#  
-#        f_new = np.sum(loss_func_scipy(params_new)**2)
-#        df = f_new - f_cur
-#        if rng.uniform(0,1) < np.exp(-df/T):
-#          print(T, f_cur, f_new, params_cur[idx], params_new[idx], np.exp(-df/T))
-#          params_cur = params_new
-#          f_cur = f_new
-#  
-#        params_hist.append((T, f_cur, params_cur))
-    T_vals = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
+    noise = init_noise
 
-    for T in tqdm.tqdm(T_vals):
-#    for T in T_vals:
+    params_hist = []
+    accept_hist = []
+    for T in anneal_protocol:
       params_new = np.exp(np.log(params_cur) + rng.normal(0, noise, num_params))
-      params_new[params_new<1e-10] = 1e-10
-      params_new[params_new>1e5] = 1e5
+      params_new[params_new<low_bound] = low_bound
+      params_new[params_new>high_bound] = high_bound
 
       f_new = np.sum(loss_func_scipy(params_new)**2)
       df = max(f_new - f_cur, T*np.log(1e-100)) # avoid overflows
       accept_prob = np.exp(-df/T) * np.product(params_new/params_cur)
       accept = False
       if rng.uniform(0,1) < accept_prob:
-#        print(T, np.mean(accept_hist), noise, f_cur, f_new, accept_prob)
         params_cur = params_new
         f_cur = f_new
         accept = True
@@ -511,13 +487,32 @@ def train_dr_MC(train_data, loss_func, init = 'random', seed = None):
       if np.mean(accept_hist) > goal_accept_rate:
         noise *= 1.002
       elif np.mean(accept_hist) < goal_accept_rate:
-        noise *= .998
+        noise /= 1.002
 
       params_hist.append((T, f_cur, params_cur))
 
-#    print(f'Monte Carlo optimization results: {f_cur}')
+  
+  #    print(f'Monte Carlo optimization results: {f_cur}')
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
+
+def train_dr_MC_multiple(train_data, loss_func, reps = 10, seed = None, **train_kwargs):
+    rng = np.random.default_rng(seed)
+    
+    seeds = []
+    results = []
+#    for rep in tqdm.trange(reps):
+    for rep in range(reps):
+      seed = rng.integers(0, 10**6)
+      res = train_dr_MC(train_data, loss_func, seed = seed, **train_kwargs)
+
+      results.append(dict(zip(['K_fret', 'k_out', 'cost', 'history'], res)))
+      seeds.append(seed)
+
+      print(rep, seed, results[-1]['cost'])
+
+    return results, seeds
+  
     
 # NOTE: following code not modified for dual-rail
 #def grid_search(num_nodes, pat, outs, loss_fn, k_domain, resolution=10, noise=0.1):
@@ -659,15 +654,58 @@ if __name__ == '__main__':
 #      'trained_network': trained_network
 #    }
 #
-    output = compare_train_funcs(
-        funcs_lst = [train_dr, train_dr_MC],
-        args_lst = [{'init': 'random', 'loss_func': rmse}, {'init': 'random', 'loss_func': rmse}],
-        num_nodes = 4,
-        num_patterns = 3,
-        noise = 0.1,
-        duplication = 20,
-        iters = 50
-    )
+#    with open(f'tmp/output_nodes={num_nodes}_pat={num_patterns}_seed={SEED}.p','wb') as outfile:
+#      pickle.dump(output, outfile)
 
-    with open(f'tmp/output_nodes={num_nodes}_pat={num_patterns}_seed={SEED}.p','wb') as outfile:
+#    output = compare_train_funcs(
+#        funcs_lst = [train_dr, train_dr_MC],
+#        args_lst = [{'init': 'random', 'loss_func': rmse}, {'init': 'random', 'loss_func': rmse}],
+#        num_nodes = 4,
+#        num_patterns = 3,
+#        noise = 0.1,
+#        duplication = 20,
+#        iters = 50
+#    )
+#
+#    with open(f'tmp/comparison_GD_MC.p','wb') as outfile:
+#      pickle.dump(output, outfile)
+    seed = np.random.randint(0, 10**6)
+    rng = np.random.default_rng(seed)
+
+    num_nodes = 4
+    num_patterns = 3
+
+    stored_data_ints = rng.permutation(2**num_nodes)[:num_patterns]
+    stored_data = [
+        np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
+        for i in stored_data_ints
+    ]
+
+    print('Stored data:')
+    for d in stored_data:
+      print(list(d))
+
+    noise = 0.1
+    duplication = 20
+    train_data = generate_training_data(stored_data, noise = noise, duplication=duplication, rng = rng)
+  
+    train_kwargs = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
+
+    train_seed_base = rng.integers(0, 10**6)
+    results, train_seeds = train_dr_MC_multiple(train_data, rmse, seed = train_seed_base, reps=100, **train_kwargs)
+  
+    output = {
+      'seed': seed,
+      'num_nodes': num_nodes,
+      'num_patterns': num_patterns,
+      'stored_data': stored_data,
+      'train_data': train_data,
+      'train_data_noise': noise,
+      'train_data_duplication': duplication,
+      'train_seeds': train_seeds,
+      'results': results,
+      'train_args': train_kwargs,
+    }
+
+    with open(f'tmp/MC_multiple_seed={seed}.p','wb') as outfile:
       pickle.dump(output, outfile)
