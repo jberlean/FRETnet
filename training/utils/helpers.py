@@ -1,4 +1,5 @@
 import numpy as np
+import itertools as it
 
 def choose(a, b):
     """
@@ -13,6 +14,15 @@ def choose(a, b):
     for i in range(faster_b):
         prod *= (a-i) / (i+1)
     return round(prod)
+
+def sliding_window(iterable, k):
+    iters = it.tee(iterable, k)
+    for num_skips, iter in enumerate(iters):
+        for _ in range(num_skips):
+            next(iter, None)
+    
+    return zip(*iters)
+
 
 def off_patterns(pat, p_off, num_pats):
     """

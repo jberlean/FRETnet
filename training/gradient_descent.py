@@ -5,12 +5,13 @@ from scipy.optimize import brute
 import warnings
 from datetime import datetime
 import os, sys
+from collections import deque
 warnings.filterwarnings("error")
 
 # INTRAPACKAGE IMPORTS
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
-from training.utils.loss import RMSE
-from training.utils.helpers import choose, off_patterns, Ainv_from_rates
+from training.utils.loss import NLL, RMSE
+from training.utils.helpers import choose, off_patterns, sliding_window, Ainv_from_rates
 
 
 def gradient(loss, pat, pred, Ainv, verbose=False):
@@ -106,6 +107,9 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
     err_over_time = []
     K_over_time = np.array(K).reshape((1, d, d))
 
+    window_size = 50
+    recent_rates = deque([K], maxlen=window_size)
+
     for i in range(max_iters):
         avg_err = 0
         dK = 0
@@ -132,17 +136,17 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         K_over_time = np.append(K_over_time, new_K.reshape(1, d, d), axis=0)
 
         # Stopping condition based on epsilon
-        if epsilon and np.linalg.norm(new_K - K) < epsilon:
-            if report_freq:
-                print(f'Stopped at iteration {i+1}\n'
-                        f'K: {new_K}\n'
-                        f'error: {avg_err}\n'
-                        f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
+        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon:
+            print(f'Stopped at iteration {i+1}\n'
+                    f'K: {new_K}\n'
+                    f'error: {avg_err}\n'
+                    f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
             return new_K, err_over_time, K_over_time
     
         if report_freq and (i) % report_freq == 0:
             print(f'Rates on iteration {i}: \n{new_K}')
 
+        recent_rates.append(K)
         K = new_K
 
     return K, err_over_time, K_over_time
@@ -200,21 +204,24 @@ if __name__ == '__main__':
     DO_ANALYSIS = False
     # hyperparameters
     outs = np.full(num_nodes, 0.5)
-    step_size = 1e-4
+    step_size = 1e-3
     max_iters = int(100 / step_size)
 
     if DO_TRAINING:
         K, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
-            epsilon=0.001 * step_size, noise=0.01, num_corrupted=3, report_freq=250)
+            epsilon=0.001 * step_size, noise=0, num_corrupted=1, report_freq=250)
 
         print (f'Training data:\n{train_data}')
         
-        plt.plot(np.arange(len(err_over_time)), err_over_time, label='Error averaged over dataset')
-
-        # track_i = 0
-        # track_j = 1
-        # plt.plot(np.arange(len(K_over_time)), K_over_time[:, track_i, track_j], label=f'K_{track_i},{track_j}')
-        plt.legend()
+        # plt.plot(np.arange(len(err_over_time)), err_over_time, label='Error averaged over dataset')
+        fig, axs = plt.subplots(num_nodes, num_nodes, sharex=True, sharey=True, \
+            gridspec_kw={'hspace': 0, 'wspace': 0})
+        fig.suptitle(f'FRET rates over time')
+        for r, c in it.product(range(num_nodes), range(num_nodes)):
+            axs[r,c].plot(np.arange(len(K_over_time)), K_over_time[:, r, c], label = f'K[{r},{c}]')
+            axs[r,c].legend()
+        
+        # plt.legend()
         plt.show()
         
     
@@ -264,9 +271,9 @@ if __name__ == '__main__':
 # ADDED RMSE error fn
 # SOLVED look into volatility of RMSE gd
 # DONE update docstrings
-# TODO Change epsilon stopping condition to use running avg
-# TODO effect of num_corrupted
-# TODO nll?
+# NEVER MIND Change epsilon stopping condition to use running avg
+# NONE effect of num_corrupted
+# DONE nll? divide by zero issues
 # TODO refine grid search; effect of noise?
 # TODO RECORD check that gd still converges to all zeros if greater noise (USE BOTH ERROR FNS)
 # todo Optimize k_out thru gradient descent
