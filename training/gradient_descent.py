@@ -5,7 +5,6 @@ from scipy.optimize import brute
 import warnings
 from datetime import datetime
 import os, sys
-from collections import deque
 warnings.filterwarnings("error")
 
 # INTRAPACKAGE IMPORTS
@@ -107,9 +106,6 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
     err_over_time = []
     K_over_time = np.array(K).reshape((1, d, d))
 
-    window_size = 50
-    recent_rates = deque([K], maxlen=window_size)
-
     for i in range(max_iters):
         avg_err = 0
         dK = 0
@@ -146,7 +142,6 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         if report_freq and (i) % report_freq == 0:
             print(f'Rates on iteration {i}: \n{new_K}')
 
-        recent_rates.append(K)
         K = new_K
 
     return K, err_over_time, K_over_time
@@ -214,6 +209,8 @@ if __name__ == '__main__':
         print (f'Training data:\n{train_data}')
         
         # plt.plot(np.arange(len(err_over_time)), err_over_time, label='Error averaged over dataset')
+        # plt.legend()
+
         fig, axs = plt.subplots(num_nodes, num_nodes, sharex=True, sharey=True, \
             gridspec_kw={'hspace': 0, 'wspace': 0})
         fig.suptitle(f'FRET rates over time')
@@ -221,7 +218,6 @@ if __name__ == '__main__':
             axs[r,c].plot(np.arange(len(K_over_time)), K_over_time[:, r, c], label = f'K[{r},{c}]')
             axs[r,c].legend()
         
-        # plt.legend()
         plt.show()
         
     
@@ -232,6 +228,7 @@ if __name__ == '__main__':
         max_iters = int(100 / step_size)
         max_nodes = 5
         loss = RMSE
+
         start_time = str(datetime.utcnow())[:19].replace(':', '-').replace(' ', '_')
         with open(f'analysis_output/converge-to-zeros_{start_time}.out', 'w') as f:
             diff_ct, trained_ct, searched_ct = 0, 0, 0
@@ -265,18 +262,9 @@ if __name__ == '__main__':
 
             
 
-
-
-# ADDED tests for helper fns, gradient
-# ADDED RMSE error fn
-# SOLVED look into volatility of RMSE gd
-# DONE update docstrings
-# NEVER MIND Change epsilon stopping condition to use running avg
-# NONE effect of num_corrupted
-# DONE nll? divide by zero issues
 # TODO refine grid search; effect of noise?
 # TODO RECORD check that gd still converges to all zeros if greater noise (USE BOTH ERROR FNS)
-# todo Optimize k_out thru gradient descent
+# TODO Optimize k_out thru gradient descent
 # TODO dual-rail
 # TODO complex optimization packages
 # TODO Change corruption of Hebbian (copy over off_patterns)
