@@ -2,168 +2,42 @@ import itertools as it
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import brute
-import math
 import warnings
 from datetime import datetime
-from tqdm import tqdm
+import os, sys
 warnings.filterwarnings("error")
 
-DO_TRAINING = False
-DO_ANALYSIS = True
+# INTRAPACKAGE IMPORTS
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+from training.utils.loss import NLL, RMSE
+from training.utils.helpers import choose, off_patterns, sliding_window, Ainv_from_rates
 
 
-
-####################
-# HELPER FUNCTIONS #
-####################
-
-def choose(a, b):
-    """
-    A short helper function to calculate binomial coefficients.
-    """
-    assert int(a) + int(b) == a + b, f'Choose only takes ints, not {a} and {b}'
-    assert a >= 0 and b >= 0, f'Choose only takes nonnegative ints, not {a} and {b}'
-    if a < b:
-        return 0
-    prod = 1
-    faster_b = min(b, a-b)
-    for i in range(faster_b):
-        prod *= (a-i) / (i+1)
-    return round(prod)
-
-def off_patterns(pat, p_off, num_pats):
-    """
-    Returns all patterns which are off from pat by a proportion 
-    specified by p_off, with a minimum of 1 element changed.
-
-    Args:
-        pat (np.array): Binary column vector of length d.
-        p_off (float in [0,1]): Probability of each node being corrupted.
-        num_pats (int): Number of corrupted patterns to return.
-
-    Returns:
-        len(pat) x num_pats 2darray (dtype=float) with corrupted patterns as columns.
-    """
-    d = len(pat)
-
-    corrupt_mask = np.random.default_rng().random((d, num_pats))
-    out = np.tile(pat, num_pats)
-
-    out[corrupt_mask < p_off] = out[corrupt_mask < p_off] ^ 1
-    return out
-
-##################
-# LOSS FUNCTIONS #
-##################
-
-def nll(pat, pred):
-    """
-    Negative Log Loss, evaluated elementwise and then summed over two arrays of the same shape.
-    """
-    
-    total = 0
-    for i in range(pat.size):
-        if pat[i,0] == 1:
-            total -= np.log(pred[i,0]) 
-        elif pat[i,0] == 0:
-            total -= np.log(1-pred[i,0])
-        else: 
-            raise ValueError()
-    return total
-
-def dnll(pat, pred):
-    """
-    Analytical gradient of the NLL function, elementwise.
-    """
-    out = np.zeros(pat.T.shape)
-    for i in range(pat.size):
-        if pat[i,0] == 1:
-            out[0,i] = -1/pred[i,0]
-        elif pat[i,0] == 0:
-            out[0,i] = 1/(1-pred[i,0])
-        else:
-            raise ValueError()
-    return out
-
-def rmse(pat, pred):
-    """
-    Root Mean Square Error function.
-    """
-    return np.mean((pat - pred) ** 2) ** 0.5
-
-def drmse(pat, pred):
-    """
-    Analytical gradient of RMSE, elementwise.
-    """
-    return ( 1/rmse(pat, pred) * 1/len(pat) * (pred - pat) ).T
-
-########################
-# GRADIENT CALCULATION #
-########################
-
-def _forward_pass(rate_matrix, pattern, output_rates):
-    """
-    Performs a 'forward pass' by analytically finding the steady-state probability
-    that each node is excited.
-
-    Args:
-        rate_matrix (np.array): The weights (rate constants, arbitrary units) between nodes in the system.
-            Should be square and symmetric.
-        train_pattern (np.array): The (binary) pixel pattern to be trained on.
-            Should be a column.
-        output_rates (np.array): The intrinsic output rate constants of each node. 
-            Should be a column.
-    
-    Returns:
-        Ainv (np.array): The inverse of the matrix representing the linear system of equations.
-            Should be square.
-        pred (np.array): The predicted values of each node's output.
-    """
-    num_nodes = len(pattern)
-    A = -rate_matrix
-    diagonal_terms = rate_matrix.sum(axis=1) + pattern.T + output_rates.T
-
-    if rate_matrix[range(num_nodes), range(num_nodes)].any():
-        raise ValueError(f'diagonal terms not 0 in the rate matrix: \n {rate_matrix}')
-
-    A[range(num_nodes), range(num_nodes)] = diagonal_terms
-
-    try:
-        Ainv = np.linalg.inv(A)
-    except:
-        raise ValueError(f'Singular matrix for rates={rate_matrix}, inputs={pattern}, outputs={output_rates}')
-
-    pred = Ainv @ pattern
-    return Ainv, pred
-
-def gradient(loss_grad, pat, pred, Ainv, output_rates, verbose=False):
+def gradient(loss, pat, pred, Ainv, verbose=False):
     """
     Finds the gradient of a loss function with respect to rates in a FRETnet.
 
     Args:
-        loss_grad: The gradient of the loss function with respect to pred.
-            Should take pat and pred as parameters and return a array of same size.
+        loss: The type of loss (usually RMSE).
         pat (np.array): The given training pattern.
             Should be a dx1 binary column vector.
         pred (np.array): The predicted output of each node.
             Should be a dx1 column of probabilities.
         Ainv (np.array): The inverse of the matrix representing the linear system.
             Should be a nxn square matrix. 
-        output_rates (np.array): The intrinsic output rate constants assigned to each node.
-            Should be a dx1 column vector.
         verbose (bool): If True, returns a dict with keys:
             Ainv, pred, dL_dpred, dpred_dAinv, dAinv_dA, dA_dK, dL_dK
 
     Returns: 
-        A dict of all the quantities computed, if verbose is True.
-        dL_dK (np.array): The gradient of the loss with respect to the weights of the network.
+        if verbose: A dict of all the quantities computed
+        else: dL_dK (np.array): The gradient of the loss with respect to the weights of the network.
             Should be a dxd matrix, reshaped from 1xd^2.
 
     """
     # don't actually have to compute the NLL, just its gradient
     num_nodes = len(pat)
 
-    dL_dpred = loss_grad(pat, pred) # 1 x d
+    dL_dpred = loss.grad(pat, pred) # 1 x d
 
     dpred_dAinv = np.kron(pat, np.identity(num_nodes)).T # d x d^2
     
@@ -195,30 +69,27 @@ def gradient(loss_grad, pat, pred, Ainv, output_rates, verbose=False):
     else:
         return reshaped_dL_dK
     
-############
-# TRAINING #
-############
-    
-def train(train_data, loss_fn, loss_grad, output_rates, step_size, iters, epsilon = None, noise = 0.1, num_corrupted=1, report_every=0):
+def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, noise=0.1, num_corrupted=1, report_freq=0):
     """
     Trains a new network on given training patterns using batch gradient descent.
-    Patterns with specified amount of noise are used as input to a simulated FRETnet, 
-    then steady-state behavior is compared to original patterns using a loss function.
-    Stops either when gradient step dK is less than epsilon or after iters iterations.
+    Stops either when gradient step dK is less than epsilon or after max_iters iterations.
 
     Args:
         train_data (np.array): 2d float array where each column is a training pattern.
             Should be dxn, where d is number of nodes and n is number of patterns.
+        loss (class<utils.LossType>): usually RMSE.
         ouput_rates (np.array): The intrinsic outputs of each node.
             Should be a dx1 column vector. 
         step_size (float): Multiplier for each gradient descent update.
-        iters (int): Number of times to pass through the training data.
-        epsilon (float): Size of gradient at which training should stop.
-        noise (float in [0,1]): Extend of deviation of training patterns 
+        max_iters (int): Number of times to pass through the training data.
+        epsilon (float or None): Size of gradient at which training should stop. 
+            None if training should go to max_iters.
+        noise (float [0,1]): Extend of deviation of training patterns 
             from the given train_data.
         num_corrupted (int): Num of corrupted patterns to generate 
-            from each template pattern. 
-        report_every (int): If True, prints all rate arrays while training.
+            from each template pattern, per training iter. 
+        report_freq (int): Rate matrix is printed every iteration multiple of this param.
+            If 0, rate matrix is never printed.
 
     Returns:
         weights (np.array): Weights between nodes in the network. 
@@ -228,14 +99,14 @@ def train(train_data, loss_fn, loss_grad, output_rates, step_size, iters, epsilo
             Should have length n.
     """
     d, n = train_data.shape
-    K = np.random.rand(d, d) / 10 + 0.45  # weights initialized at 0.5 +/- 0.05
+    K = np.random.randn(d, d) / 10 + 0.5  # weights initialized normally around 0.5
     
     K = (K + K.T) / 2  # ensure starting weights are symmetric
     np.fill_diagonal(K, 0)
     err_over_time = []
     K_over_time = np.array(K).reshape((1, d, d))
 
-    for i in range(iters):
+    for i in range(max_iters):
         avg_err = 0
         dK = 0
 
@@ -246,44 +117,51 @@ def train(train_data, loss_fn, loss_grad, output_rates, step_size, iters, epsilo
             for k in range(num_corrupted):
                 pat = train_patterns[:, k:k+1].astype(float) # ensure float
 
-                # TODO Find a better way to deal with singular matrices
-                #       arising from all-zero patterns
-                
-                pat[pat==0] = 0.1
-
                 # Compute the prediction based on the off patterns,
                 # But evaluate error relative to original template pattern.
-                Ainv, pred = _forward_pass(K, pat, output_rates)
-                # print(f'pat: \n{pat} \n pred: \n{pred}')
-                dL_dK = gradient(loss_grad, template, pred, Ainv, output_rates)
+                Ainv = Ainv_from_rates(K, pat, output_rates)
+                pred = Ainv @ pat
+                dL_dK = gradient(loss, template, pred, Ainv)
                 dK += dL_dK
-                avg_err += loss_fn(template, pred)/(n * num_corrupted)
+                avg_err += loss.fn(template, pred)/(n * num_corrupted)
         
         new_K = K.copy()
         new_K -= step_size * dK
-        new_K[new_K<0] = 0 # NOTE ReLU; ensures all weights are positive.
+        new_K[new_K<0] = 0 # ReLU; ensures all weights nonnegative.
         err_over_time.append(avg_err)
         K_over_time = np.append(K_over_time, new_K.reshape(1, d, d), axis=0)
 
         # Stopping condition based on epsilon
-        if epsilon and np.linalg.norm(new_K - K) < epsilon:
-            if report_every:
-                print(f'Stopped at iteration {i+1}\n'
-                        f'K: {new_K}\n'
-                        f'error: {avg_err}\n'
-                        f'< epsilon: {np.linalg.norm(new_K - K)}')
+        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon:
+            print(f'Stopped at iteration {i+1}\n'
+                    f'K: {new_K}\n'
+                    f'error: {avg_err}\n'
+                    f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
             return new_K, err_over_time, K_over_time
     
-        if report_every and (i) % report_every == 0:
+        if report_freq and (i) % report_freq == 0:
             print(f'Rates on iteration {i}: \n{new_K}')
 
         K = new_K
 
     return K, err_over_time, K_over_time
 
-def grid_search(num_nodes, pats, outs, loss_fn, k_domain, resolution=3, noise=0.1, verbose=True):
+def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise=0.1):
     """
-    Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss_fn.
+    Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss.
+
+    Args:
+        num_nodes (int)
+        pats (np.array): a column array, template of num_nodes bits.
+        outs (np.array): a column array, the intrinsic outputs for each node.
+        loss (class<training.utils.LossType>)
+        k_domain (2-tuple): the domain of rates to search in.
+        resolution: number of points to sample in the domain. 
+            ex: k_domain=(0,1), resolution=3 -> [0, 0.5, 1]
+        noise: probability of each input bit being corrupted during evaluation.
+
+    Returns:
+        K_min (np.array): the rates producing the lowest loss.
     """
     triu_idx = np.triu_indices(num_nodes, 1)
     num_cols = pats.shape[1]
@@ -293,16 +171,15 @@ def grid_search(num_nodes, pats, outs, loss_fn, k_domain, resolution=3, noise=0.
         K += K.T
 
         loss_sum = 0
-
         for c in range(num_cols):
             pat = pats[:, c:c+1]
-            _, pred = _forward_pass(K, pat, outs)
+            Ainv = Ainv_from_rates(K, pat, outs)
+            pred = Ainv @ pat
             num_corrupted = 5
             off_pats = off_patterns(pat, noise, num_corrupted)
             for i in range(num_corrupted):
                 off_pat = off_pats[:, i:i+1]
-                loss_sum += loss_fn(off_pat, pred)
-        #TODO handle all zeros in off_pat
+                loss_sum += loss.fn(off_pat, pred)
         return loss_sum
     
     k_ranges = [tuple(k_domain) for _ in range(choose(num_nodes, 2))]
@@ -318,41 +195,45 @@ if __name__ == '__main__':
     num_nodes = 5
     num_patterns = 4
     train_data = np.random.randint(2, size=(num_nodes, num_patterns))
-
+    DO_TRAINING = True
+    DO_ANALYSIS = False
     # hyperparameters
     outs = np.full(num_nodes, 0.5)
-    step_size = 0.001
-    iters = int(100 / step_size)
+    step_size = 1e-3
+    max_iters = int(100 / step_size)
 
     if DO_TRAINING:
-        K, err_over_time, K_over_time = train(train_data, rmse, drmse, outs, step_size, iters, 
-            epsilon=0.001 * step_size, noise=0.1, report_every=250)
+        K, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
+            epsilon=0.001 * step_size, noise=0, num_corrupted=1, report_freq=250)
 
         print (f'Training data:\n{train_data}')
         
-        plt.plot(np.arange(len(err_over_time)), err_over_time, label='Error averaged over dataset')
+        # plt.plot(np.arange(len(err_over_time)), err_over_time, label='Error averaged over dataset')
+        # plt.legend()
 
-        # track_i = 0
-        # track_j = 1
-        # plt.plot(np.arange(len(K_over_time)), K_over_time[:, track_i, track_j], label=f'K_{track_i},{track_j}')
-        plt.legend()
+        fig, axs = plt.subplots(num_nodes, num_nodes, sharex=True, sharey=True, \
+            gridspec_kw={'hspace': 0, 'wspace': 0})
+        fig.suptitle(f'FRET rates over time')
+        for r, c in it.product(range(num_nodes), range(num_nodes)):
+            axs[r,c].plot(np.arange(len(K_over_time)), K_over_time[:, r, c], label = f'K[{r},{c}]')
+            axs[r,c].legend()
+        
         plt.show()
         
-        print(nll(train_data[:, 1:2], _forward_pass(K, train_data[:, 1:2], outs)[1]))
     
     if DO_ANALYSIS:
         total = 0
         ct = 0
         step_size = 0.01
-        iters = int(100 / step_size)
+        max_iters = int(100 / step_size)
         max_nodes = 5
-        start_time = str(datetime.utcnow())[:19].replace(':', '-')
-        with open(f'analysis_output/converge_to_zeros {start_time}.txt', 'w') as f:
+        loss = RMSE
+
+        start_time = str(datetime.utcnow())[:19].replace(':', '-').replace(' ', '_')
+        with open(f'analysis_output/converge-to-zeros_{start_time}.out', 'w') as f:
             diff_ct, trained_ct, searched_ct = 0, 0, 0
             for num_nodes in range(3, max_nodes + 1, 2):
                 for num_patterns in range(2, num_nodes, 2):
-                    # for loss in ((rmse, drmse, 'rmse'), (nll, dnll, 'nll')):
-                    for loss in [(rmse, drmse, 'rmse')]:
                         for out_val in np.linspace(0.2, 1, 3):
                             outs = np.full(num_nodes, out_val)
                             for noise in np.linspace(0.1, 0.5, 3):
@@ -360,11 +241,11 @@ if __name__ == '__main__':
                                 train_data = np.random.randint(2, size=(num_nodes, num_patterns))
                                 f.write(f'Training Data:\n{train_data}\n')
 
-                                K, _, _ = train(train_data, loss[0], loss[1], np.full(num_nodes, outs), step_size, iters, epsilon=0.0001*step_size, noise=noise, report_every = 0)
+                                K, _, _ = train(train_data, loss, np.full(num_nodes, outs), step_size, max_iters, epsilon=0.0001*step_size, noise=noise, report_freq = 0)
                                 f.write(f'Trained weights:\n{K}\n')
                                 trained_allzero = np.count_nonzero(K) == 0
                                 
-                                K_min = grid_search(num_nodes, train_data, outs, loss[0], [0, 1], resolution=3, noise=noise)
+                                K_min = grid_search(num_nodes, train_data, outs, loss.fn, [0, 1], resolution=3, noise=noise)
                                 f.write(f'Searched weights:\n{K_min}\n')
                                 searched_allzero = np.count_nonzero(K_min) == 0
 
@@ -381,15 +262,9 @@ if __name__ == '__main__':
 
             
 
-
-
-# ADDED tests for helper fns, gradient
-# ADDED RMSE error fn
+# TODO refine grid search; effect of noise?
 # TODO RECORD check that gd still converges to all zeros if greater noise (USE BOTH ERROR FNS)
-# TODO RECORD grid search on rate matrix + amt of noise for nontrivial global error min 
-# TODO look into volatility of RMSE gd
-# TODO update docstrings
-# todo Optimize k_out thru gradient descent
+# TODO Optimize k_out thru gradient descent
 # TODO dual-rail
 # TODO complex optimization packages
 # TODO Change corruption of Hebbian (copy over off_patterns)
