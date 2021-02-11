@@ -89,7 +89,7 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         num_corrupted (int): Num of corrupted patterns to generate 
             from each template pattern, per training iter. 
         report_freq (int): Rate matrix is printed every iteration multiple of this param.
-            If 0, rate matrix is never printed.
+            0 to only report final rates, -1 to report nothing.
 
     Returns:
         weights (np.array): Weights between nodes in the network. 
@@ -132,21 +132,21 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         K_over_time = np.append(K_over_time, new_K.reshape(1, d, d), axis=0)
 
         # Stopping condition based on epsilon
-        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon:
+        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon and report_freq >= 0:
             print(f'Stopped at iteration {i+1}\n'
                     f'K: {new_K}\n'
                     f'error: {avg_err}\n'
                     f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
             return new_K, err_over_time, K_over_time
     
-        if report_freq and (i) % report_freq == 0:
+        if report_freq > 0 and (i) % report_freq == 0:
             print(f'Rates on iteration {i}: \n{new_K}')
 
         K = new_K
 
     return K, err_over_time, K_over_time
 
-def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise=0.1):
+def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise=0.1, num_corrupted=1):
     """
     Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss.
 
@@ -159,27 +159,28 @@ def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise
         resolution: number of points to sample in the domain. 
             ex: k_domain=(0,1), resolution=3 -> [0, 0.5, 1]
         noise: probability of each input bit being corrupted during evaluation.
+        num_corrupted: The number of corrupted patterns to generate from each true pattern.
 
     Returns:
         K_min (np.array): the rates producing the lowest loss.
     """
     triu_idx = np.triu_indices(num_nodes, 1)
     num_cols = pats.shape[1]
-    def f(params):
+
+    def f(params):      # The function to be brute-force optimized
         K = np.zeros((num_nodes, num_nodes), dtype=float)
         K[triu_idx] = params
         K += K.T
 
         loss_sum = 0
         for c in range(num_cols):
-            pat = pats[:, c:c+1]
-            Ainv = Ainv_from_rates(K, pat, outs)
-            pred = Ainv @ pat
-            num_corrupted = 5
-            off_pats = off_patterns(pat, noise, num_corrupted)
+            template = pats[:, c:c+1]
+            off_pats = off_patterns(template, noise, num_corrupted)
             for i in range(num_corrupted):
                 off_pat = off_pats[:, i:i+1]
-                loss_sum += loss.fn(off_pat, pred)
+                Ainv = Ainv_from_rates(K, off_pat, outs)
+                pred = Ainv @ off_pat
+                loss_sum += loss.fn(template, pred)
         return loss_sum
     
     k_ranges = [tuple(k_domain) for _ in range(choose(num_nodes, 2))]
@@ -195,15 +196,16 @@ if __name__ == '__main__':
     num_nodes = 5
     num_patterns = 4
     train_data = np.random.randint(2, size=(num_nodes, num_patterns))
-    DO_TRAINING = True
-    DO_ANALYSIS = False
+    DO_TRAINING = False
+    DO_ANALYSIS = True
+
     # hyperparameters
     outs = np.full(num_nodes, 0.5)
     step_size = 1e-3
     max_iters = int(100 / step_size)
 
     if DO_TRAINING:
-        K, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
+        K_train, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
             epsilon=0.001 * step_size, noise=0, num_corrupted=1, report_freq=250)
 
         print (f'Training data:\n{train_data}')
@@ -223,42 +225,43 @@ if __name__ == '__main__':
     
     if DO_ANALYSIS:
         total = 0
-        ct = 0
-        step_size = 0.01
+        step_size = 1e-3
         max_iters = int(100 / step_size)
+        num_corrupted = 3
         max_nodes = 5
         loss = RMSE
 
         start_time = str(datetime.utcnow())[:19].replace(':', '-').replace(' ', '_')
         with open(f'analysis_output/converge-to-zeros_{start_time}.out', 'w') as f:
-            diff_ct, trained_ct, searched_ct = 0, 0, 0
+            allzero_diff, trained_allzero, searched_allzero = 0, 0, 0
             for num_nodes in range(3, max_nodes + 1, 2):
                 for num_patterns in range(2, num_nodes, 2):
                         for out_val in np.linspace(0.2, 1, 3):
                             outs = np.full(num_nodes, out_val)
-                            for noise in np.linspace(0.1, 0.5, 3):
-                                print(f'{num_nodes} nodes, {num_patterns} patterns, outs={round(out_val, 1)}, noise={round(noise, 1)}')
-                                train_data = np.random.randint(2, size=(num_nodes, num_patterns))
-                                f.write(f'Training Data:\n{train_data}\n')
+                            # for noise in np.linspace(0.1, 0.5, 3):
+                            noise = 0.01
+                            print(f'Analyzing {num_nodes} nodes, {num_patterns} patterns, outs={round(out_val, 1)}, noise={round(noise, 1)}...')
+                            train_data = np.random.randint(2, size=(num_nodes, num_patterns))
+                            f.write(f'Training Data:\n{train_data}\n')
 
-                                K, _, _ = train(train_data, loss, np.full(num_nodes, outs), step_size, max_iters, epsilon=0.0001*step_size, noise=noise, report_freq = 0)
-                                f.write(f'Trained weights:\n{K}\n')
-                                trained_allzero = np.count_nonzero(K) == 0
-                                
-                                K_min = grid_search(num_nodes, train_data, outs, loss.fn, [0, 1], resolution=3, noise=noise)
-                                f.write(f'Searched weights:\n{K_min}\n')
-                                searched_allzero = np.count_nonzero(K_min) == 0
+                            K_train, _, _ = train(train_data, loss, np.full(num_nodes, outs), step_size, max_iters, \
+                                epsilon=0.0001*step_size, noise=noise, num_corrupted=num_corrupted, report_freq=-1)
+                            f.write(f'Trained weights:\n{K_train}\n')
+                            trained_allzero += np.count_nonzero(K_train) == 0
+                            
+                            K_search = grid_search(num_nodes, train_data, outs, loss, [0, 1], \
+                                resolution=3, noise=noise, num_corrupted=num_corrupted)
+                            f.write(f'Searched weights:\n{K_search}\n')
+                            searched_allzero += np.count_nonzero(K_search) == 0
 
-                                f.write('\n')
+                            f.write('\n')
 
-                                diff_ct += int(trained_allzero != searched_allzero)
-                                trained_ct += int(trained_allzero)
-                                searched_ct += int(searched_allzero)
-                                total += 1
+                            allzero_diff += int(trained_allzero != searched_allzero)
+                            total += 1
 
-            f.write(f'{trained_ct}/{total} training runs resulted in all zeros\n'
-                f'{searched_ct}/{total} grid searches found optimum to be all zeros\n'
-                f'Training and grid searching disagreed on {diff_ct}/{total} param sets')
+            f.write(f'{trained_allzero}/{total} training runs resulted in all zeros\n'
+                f'{searched_allzero}/{total} grid searches found optimum to be all zeros\n'
+                f'Training and grid searching disagreed on {allzero_diff}/{total} param sets')
 
             
 
