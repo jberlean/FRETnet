@@ -1,17 +1,13 @@
 import os, sys
 import itertools as it
-import pickle, dill
+import pickle
 import math
+import multiprocessing as mp
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.optimize import brute
 import scipy.special
 import tqdm
-
-import warnings
-warnings.filterwarnings("error")
 
 # INTRAPACKAGE IMPORTS
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
@@ -496,20 +492,25 @@ def train_dr_MC(train_data, loss_func, low_bound = 1e-10, high_bound = 1e5, anne
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
 
+def train_dr_MC_multiple_aux(args):
+    train_data, loss_func, seed, train_kwargs = args
+    return train_dr_MC(train_data, loss_func, seed=seed, **train_kwargs)
 def train_dr_MC_multiple(train_data, loss_func, reps = 10, seed = None, **train_kwargs):
     rng = np.random.default_rng(seed)
     
-    seeds = []
+    seeds = [rng.integers(0, 10**6) for _ in range(reps)]
+
     results = []
-#    for rep in tqdm.trange(reps):
-    for rep in range(reps):
-      seed = rng.integers(0, 10**6)
-      res = train_dr_MC(train_data, loss_func, seed = seed, **train_kwargs)
+    with mp.Pool(processes=4) as pool:
+      args_lst = [(train_data, loss_func, seed, train_kwargs) for seed in seeds]
+      results_it = pool.imap(train_dr_MC_multiple_aux, args_lst)
 
-      results.append(dict(zip(['K_fret', 'k_out', 'cost', 'history'], res)))
-      seeds.append(seed)
+      #pbar = tqdm.tqdm(total=reps)
+      for res in tqdm.tqdm(results_it, total=reps):
+        results.append(dict(zip(['K_fret', 'k_out', 'cost', 'history'], res)))
+      #  pbar.update(1)
+      #pbar.close()
 
-      print(rep, seed, results[-1]['cost'])
 
     return results, seeds
   
@@ -692,7 +693,7 @@ if __name__ == '__main__':
     train_kwargs = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
 
     train_seed_base = rng.integers(0, 10**6)
-    results, train_seeds = train_dr_MC_multiple(train_data, rmse, seed = train_seed_base, reps=100, **train_kwargs)
+    results, train_seeds = train_dr_MC_multiple(train_data, rmse, seed = train_seed_base, reps=20, **train_kwargs)
   
     output = {
       'seed': seed,
@@ -707,5 +708,5 @@ if __name__ == '__main__':
       'train_args': train_kwargs,
     }
 
-    with open(f'tmp/MC_multiple_seed={seed}.p','wb') as outfile:
+    with open(f'/scratch/jberlean/tmp/MC_multiple1000x_seed={seed}.p','wb') as outfile:
       pickle.dump(output, outfile)
