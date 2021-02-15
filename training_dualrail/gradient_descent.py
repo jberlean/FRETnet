@@ -12,8 +12,6 @@ import tqdm
 # INTRAPACKAGE IMPORTS
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
 from objects import utils
-from training.utils.loss import RMSE
-from training.utils.helpers import off_patterns, Ainv_from_rates, k_in_from_input_data
 
 
 ####################
@@ -112,10 +110,11 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
     Returns:
         pred (np.array): The predicted values of each node's output.
     """
-    if Ainv is None:  Ainv = Ainv_from_rates(rate_matrix, input_rates, output_rates)
+    if Ainv is None:  Ainv = Ainv_from_rates(rate_matrix, output_rates, input_rates)
 
     pred = Ainv @ input_rates
-    
+#    print(pred)
+#    print(output_rates)
     return pred * output_rates
 
 def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv = None):
@@ -161,7 +160,7 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv 
     
 
 # note: not yet modified for use with dual-rail
-def gradient(loss_grad, pat, pred, Ainv, verbose=False):
+def gradient(loss_grad, pat, pred, Ainv, output_rates, verbose=False):
     """
     Finds the gradient of a loss function with respect to rates in a FRETnet.
 
@@ -174,6 +173,8 @@ def gradient(loss_grad, pat, pred, Ainv, verbose=False):
             Should be a dx1 column of probabilities.
         Ainv (np.array): The inverse of the matrix representing the linear system.
             Should be a nxn square matrix. 
+        output_rates (np.array): The intrinsic output rate constants assigned to each node.
+            Should be a dx1 column vector.
         verbose (bool): If True, returns a dict with keys:
             Ainv, pred, dL_dpred, dpred_dAinv, dAinv_dA, dA_dK, dL_dK
 
@@ -394,9 +395,9 @@ def train_dr(train_data, loss_func, init = 'random', seed = None):
 #    elif init == 'hebbian':
 #      init_params = 5*rates_to_params(*train_dr_hebbian(stored_data)) + 1
     else:
-      init_params = rng.uniform(1, 10, num_params)
+      init_params = rng.uniform(1e-10, 100, num_params)
 #    print(params_to_rates(init_params))
-    res = scipy.optimize.least_squares(loss_func_scipy, init_params, bounds=(0,10**5), jac='3-point')
+    res = scipy.optimize.least_squares(loss_func_scipy, init_params, bounds=(1e-10,10**5), jac='3-point')
 
 #    print(res)
 
@@ -491,24 +492,24 @@ def train_dr_MC(train_data, loss_func, low_bound = 1e-10, high_bound = 1e5, anne
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
 
-def train_dr_MC_multiple_aux(args):
-    train_data, loss_func, seed, train_kwargs = args
-    return train_dr_MC(train_data, loss_func, seed=seed, **train_kwargs)
-def train_dr_MC_multiple(train_data, loss_func, reps = 10, seed = None, **train_kwargs):
+def train_dr_multiple_aux(args):
+    train_func, train_data, loss_func, seed, train_kwargs = args
+    return train_func(train_data, loss_func, seed=seed, **train_kwargs)
+def train_dr_multiple(train_func, train_data, loss_func, processes = None, reps = 10, pbar_file = None, seed = None, **train_kwargs):
     rng = np.random.default_rng(seed)
     
     seeds = [rng.integers(0, 10**6) for _ in range(reps)]
 
-    results = []
-    with mp.Pool(processes=4) as pool:
-      args_lst = [(train_data, loss_func, seed, train_kwargs) for seed in seeds]
-      results_it = pool.imap(train_dr_MC_multiple_aux, args_lst)
+    if pbar_file is None:  pbar_file = sys.stderr # default for tqdm
 
-      #pbar = tqdm.tqdm(total=reps)
-      for res in tqdm.tqdm(results_it, total=reps):
-        results.append(dict(zip(['K_fret', 'k_out', 'cost', 'history'], res)))
-      #  pbar.update(1)
-      #pbar.close()
+    if processes is None:  processes = os.cpu_count()
+
+    results = []
+    with mp.Pool(processes=processes) as pool:
+      args_lst = [(train_func, train_data, loss_func, seed, train_kwargs) for seed in seeds]
+      results_it = pool.imap(train_dr_multiple_aux, args_lst)
+      for res in tqdm.tqdm(results_it, total=reps, file=pbar_file):
+        results.append(dict(zip(['K_fret', 'k_out', 'cost', 'raw'], res)))
 
 
     return results, seeds
@@ -519,34 +520,27 @@ def train_dr_MC_multiple(train_data, loss_func, reps = 10, seed = None, **train_
 #    """
 #    Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss_fn.
 #    """
-    # triu_idx = np.triu_indices(num_nodes, 1)
-    # num_cols = pats.shape[1]
-    # def f(params):
-    #     K = np.zeros((num_nodes, num_nodes), dtype=float)
-    #     K[triu_idx] = params
-    #     K += K.T
-
-    #     loss_sum = 0
-
-    #     for c in range(num_cols):
-    #         pat = pats[:, c:c+1]
-    #         Ainv = Ainv_from_rates(K, pat, outs)
-    #         pred = Ainv @ pat
-    #         num_corrupted = 5
-    #         off_pats = off_patterns(pat, noise, num_corrupted)
-    #         for i in range(num_corrupted):
-    #             off_pat = off_pats[:, i:i+1]
-    #             loss_sum += loss_fn(off_pat, pred)
-    #     #TODO handle all zeros in off_pat
-    #     return loss_sum
-    
-    # k_ranges = [tuple(k_domain) for _ in range(choose(num_nodes, 2))]
-
-    # resbrute = brute(f, k_ranges, Ns=resolution, finish=None)
-    # K_min = np.zeros((num_nodes, num_nodes), dtype=float)
-    # K_min[triu_idx] = resbrute
-    # K_min += K_min.T
-    # return K_min
+#    def f(params):
+#        K = np.reshape(params, (num_nodes, num_nodes))
+#        _, pred = _forward_pass(K, pat, outs)
+#        num_corrupted = 10
+#        off_pats = off_patterns(pat, noise, num_corrupted)
+#        avg_loss = 0
+#        for i in range(num_corrupted):
+#            off_pat = off_pats[:, i:i+1]
+#            avg_loss += loss_fn(off_pat, pred) / num_corrupted
+#        #TODO handle all zeros in off_pat
+#        return avg_loss
+#    
+#    k_ranges = [tuple(k_domain) for _ in range(num_nodes**2)]
+#    diag_indices = [(d*num_nodes + d) for d in range(num_nodes)]
+#    for i in diag_indices:
+#        k_ranges[i] = (0, 0)
+#    print(k_ranges)
+#
+#    resbrute = brute(f, k_ranges, Ns=resolution, finish=None)
+#    K_min = np.reshape(resbrute, (num_nodes, num_nodes))
+#    return K_min
 
 def compare_train_funcs(funcs_lst, args_lst, num_nodes = 4, num_patterns = 3, noise = 0.1, duplication = 20, iters = 50):
     all_output = []
@@ -676,8 +670,17 @@ if __name__ == '__main__':
 #
 #    with open(f'tmp/comparison_GD_MC.p','wb') as outfile:
 #      pickle.dump(output, outfile)
-    seed = np.random.randint(0, 10**6)
+
+    train_mode = int(sys.argv[1]) # 1 = MC, 2 = GD, 3 = MC+GD
+    
+    if len(sys.argv) >=3:  seed = int(sys.argv[2])
+    else:  seed = np.random.randint(0, 10**6)
+
     rng = np.random.default_rng(seed)
+
+    train_MC = bool(train_mode&1)
+    train_GD = bool(train_mode&2)
+    train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}' # for file paths
 
     num_nodes = 4
     num_patterns = 3
@@ -696,11 +699,21 @@ if __name__ == '__main__':
     duplication = 20
     train_data = generate_training_data(stored_data, noise = noise, duplication=duplication, rng = rng)
   
-    train_kwargs = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
 
     train_seed_base = rng.integers(0, 10**6)
-    results, train_seeds = train_dr_MC_multiple(train_data, rmse, seed = train_seed_base, reps=20, **train_kwargs)
-  
+    pbar_file = open(f'pbar{train_str}_seed={seed}', 'w')
+
+    reps = 1000
+
+    if train_MC:
+      train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
+      results_MC, train_seeds_MC = train_dr_multiple(train_dr_MC, train_data, rmse, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
+    if train_GD:
+      train_kwargs_GD = {}
+      results_GD, train_seeds_GD = train_dr_multiple(train_dr, train_data, rmse, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
+
+    pbar_file.close()
+ 
     output = {
       'seed': seed,
       'num_nodes': num_nodes,
@@ -709,10 +722,16 @@ if __name__ == '__main__':
       'train_data': train_data,
       'train_data_noise': noise,
       'train_data_duplication': duplication,
-      'train_seeds': train_seeds,
-      'results': results,
-      'train_args': train_kwargs,
     }
+    if train_MC:
+      output['train_args_MC'] = train_kwargs_MC
+      output['train_seeds_MC'] = train_seeds_MC
+      output['results_MC'] = results_MC
+    if train_GD:
+      output['train_args_GD'] = train_kwargs_GD
+      output['train_seeds_GD'] = train_seeds_GD
+      output['results_GD'] = results_GD
+     
 
-    with open(f'/scratch/jberlean/tmp/MC_multiple1000x_seed={seed}.p','wb') as outfile:
+    with open(f'/scratch/jberlean/tmp/train{train_str}_{reps}x_seed={seed}.p','wb') as outfile:
       pickle.dump(output, outfile)
