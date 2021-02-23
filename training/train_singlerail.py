@@ -88,7 +88,7 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         num_corrupted (int): Num of corrupted patterns to generate 
             from each template pattern, per training iter. 
         report_freq (int): Rate matrix is printed every iteration multiple of this param.
-            If 0, rate matrix is never printed.
+            0 to only report final rates, -1 to report nothing.
 
     Returns:
         weights (np.array): Weights between nodes in the network. 
@@ -131,21 +131,21 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         K_over_time = np.append(K_over_time, new_K.reshape(1, d, d), axis=0)
 
         # Stopping condition based on epsilon
-        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon:
+        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon and report_freq >= 0:
             print(f'Stopped at iteration {i+1}\n'
                     f'K: {new_K}\n'
                     f'error: {avg_err}\n'
                     f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
             return new_K, err_over_time, K_over_time
     
-        if report_freq and (i) % report_freq == 0:
+        if report_freq > 0 and (i) % report_freq == 0:
             print(f'Rates on iteration {i}: \n{new_K}')
 
         K = new_K
 
     return K, err_over_time, K_over_time
 
-def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise=0.1):
+def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise=0.1, num_corrupted=1):
     """
     Grid-searches FRET rates with given intrinsic output rates, noise amt for the configuration with the lowest loss.
 
@@ -158,27 +158,28 @@ def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise
         resolution: number of points to sample in the domain. 
             ex: k_domain=(0,1), resolution=3 -> [0, 0.5, 1]
         noise: probability of each input bit being corrupted during evaluation.
+        num_corrupted: The number of corrupted patterns to generate from each true pattern.
 
     Returns:
         K_min (np.array): the rates producing the lowest loss.
     """
     triu_idx = np.triu_indices(num_nodes, 1)
     num_cols = pats.shape[1]
-    def f(params):
+
+    def f(params):      # The function to be brute-force optimized
         K = np.zeros((num_nodes, num_nodes), dtype=float)
         K[triu_idx] = params
         K += K.T
 
         loss_sum = 0
         for c in range(num_cols):
-            pat = pats[:, c:c+1]
-            Ainv = Ainv_from_rates(K, pat, outs)
-            pred = Ainv @ pat
-            num_corrupted = 5
-            off_pats = off_patterns(pat, noise, num_corrupted)
+            template = pats[:, c:c+1]
+            off_pats = off_patterns(template, noise, num_corrupted)
             for i in range(num_corrupted):
                 off_pat = off_pats[:, i:i+1]
-                loss_sum += loss.fn(off_pat, pred)
+                Ainv = Ainv_from_rates(K, off_pat, outs)
+                pred = Ainv @ off_pat
+                loss_sum += loss.fn(template, pred)
         return loss_sum
     
     k_ranges = [tuple(k_domain) for _ in range(choose(num_nodes, 2))]
@@ -188,5 +189,4 @@ def grid_search(num_nodes, pats, outs, loss, k_domain=(0,1), resolution=3, noise
     K_min[triu_idx] = resbrute
     K_min += K_min.T
     return K_min
-
 

@@ -184,7 +184,7 @@ def train_dr(train_data, loss, init = 'random', seed = None):
 
     return (*params_to_rates(res.x), 2*res.cost, res)
     
-def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None):
+def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -221,13 +221,13 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
     num_nodes_dr = len(train_data[0][0])
     num_nodes_sr = 2*num_nodes_dr
 
-    num_params = num_nodes_sr*(num_nodes_sr-1)//2 + num_nodes_sr
+    num_params = num_nodes_sr*(num_nodes_sr-1)//2 #+ num_nodes_sr
 
     if anneal_protocol is None:
       anneal_protocol = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
-    accept_hist_len = 50
+    accept_hist_len = 500
 
-    init_params = rng.uniform(low_bound, high_bound, num_params)
+    init_params = np.exp(rng.uniform(np.log(low_bound), np.log(high_bound), num_params))
 #    print(params_to_rates(init_params))
 
     params_cur = init_params
@@ -236,14 +236,17 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
 
     params_hist = []
     accept_hist = []
-    for T in anneal_protocol:
+    for i, T in enumerate(anneal_protocol):
       params_new = np.exp(np.log(params_cur) + rng.normal(0, noise, num_params))
-      params_new[params_new<low_bound] = low_bound
-      params_new[params_new>high_bound] = high_bound
 
-      f_new = np.sum(loss_func_scipy(params_new)**2)
+      if any(params_new > high_bound) or any(params_new < low_bound):
+        f_new = np.inf # disallow moving outside the bounds
+      else:
+        f_new = np.sum(loss_func_scipy(params_new)**2)
+
       df = max(f_new - f_cur, T*np.log(1e-100)) # avoid overflows
-      accept_prob = np.exp(-df/T) * np.product(params_new/params_cur)
+#      accept_prob = np.exp(-df/T) * np.product(params_new/params_cur)  # use correction factor for uniform prior
+      accept_prob = np.exp(-df/T)  # removing the correction factor uses a log-uniform prior
       accept = False
       if rng.uniform(0,1) < accept_prob:
         params_cur = params_new
@@ -254,10 +257,13 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
       if len(accept_hist) > accept_hist_len:
         accept_hist = accept_hist[-accept_hist_len:]
 
-      if np.mean(accept_hist) > goal_accept_rate:
-        noise *= 1.002
-      elif np.mean(accept_hist) < goal_accept_rate:
-        noise /= 1.002
+#      if np.mean(accept_hist) > goal_accept_rate:
+#        noise *= 1.002
+#      elif np.mean(accept_hist) < goal_accept_rate:
+#        noise /= 1.002
+
+      if verbose and i%500 == 0:
+        print(i, T, f_cur, np.mean(accept_hist))
 
       params_hist.append((T, f_cur, params_cur))
 

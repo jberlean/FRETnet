@@ -42,7 +42,11 @@ train_kwargs_GD = {}
 
 # Output parameters
 #outpath = f'/scratch/jberlean/tmp/train{train_str}_{reps}x_seed={seed}.p'
-outpath = f'tmp/{seed}/train{train_str}_{reps}x_seed={seed}.p'
+outputdir = f'tmp/{seed}'
+pbarpath = os.path.join(outputdir, f'pbar{train_str}_seed={seed}')
+outpath = os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}.p')
+
+os.makedirs(os.path.dirname(outpath), exist_ok=True)
 
 
 ## Run code
@@ -63,7 +67,7 @@ train_data = train_dualrail.generate_training_data(stored_data, noise = noise, d
 
 # Perform training
 train_seed_base = rng.integers(0, 10**6)
-pbar_file = open(f'pbar{train_str}_seed={seed}', 'w')
+pbar_file = open(pbarpath, 'w')
 
 if train_MC:
   results_MC, train_seeds_MC = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MC, train_data, train_utils.RMSE, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
@@ -91,7 +95,7 @@ if train_GD:
   output['train_seeds_GD'] = train_seeds_GD
   output['results_GD'] = results_GD
  
-os.makedirs(os.path.dirname(outpath), exist_ok=True)
-
 with open(outpath,'wb') as outfile:
   pickle.dump(output, outfile)
+
+

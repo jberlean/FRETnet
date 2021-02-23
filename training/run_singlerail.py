@@ -12,19 +12,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 from train_utils import NLL, RMSE
 from train_singlerail import train
 
-
 num_nodes = 5
 num_patterns = 4
 train_data = np.random.randint(2, size=(num_nodes, num_patterns))
-DO_TRAINING = True
-DO_ANALYSIS = False
+DO_TRAINING = False
+DO_ANALYSIS = True
+
 # hyperparameters
 outs = np.full(num_nodes, 0.5)
 step_size = 1e-3
 max_iters = int(100 / step_size)
 
 if DO_TRAINING:
-    K, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
+    K_train, err_over_time, K_over_time = train(train_data, RMSE, outs, step_size, max_iters, 
         epsilon=0.001 * step_size, noise=0, num_corrupted=1, report_freq=250)
 
     print (f'Training data:\n{train_data}')
@@ -44,42 +44,43 @@ if DO_TRAINING:
 
 if DO_ANALYSIS:
     total = 0
-    ct = 0
-    step_size = 0.01
+    step_size = 1e-3
     max_iters = int(100 / step_size)
+    num_corrupted = 3
     max_nodes = 5
     loss = RMSE
 
     start_time = str(datetime.utcnow())[:19].replace(':', '-').replace(' ', '_')
     with open(f'analysis_output/converge-to-zeros_{start_time}.out', 'w') as f:
-        diff_ct, trained_ct, searched_ct = 0, 0, 0
+        allzero_diff, trained_allzero, searched_allzero = 0, 0, 0
         for num_nodes in range(3, max_nodes + 1, 2):
             for num_patterns in range(2, num_nodes, 2):
                     for out_val in np.linspace(0.2, 1, 3):
                         outs = np.full(num_nodes, out_val)
-                        for noise in np.linspace(0.1, 0.5, 3):
-                            print(f'{num_nodes} nodes, {num_patterns} patterns, outs={round(out_val, 1)}, noise={round(noise, 1)}')
-                            train_data = np.random.randint(2, size=(num_nodes, num_patterns))
-                            f.write(f'Training Data:\n{train_data}\n')
+                        # for noise in np.linspace(0.1, 0.5, 3):
+                        noise = 0.01
+                        print(f'Analyzing {num_nodes} nodes, {num_patterns} patterns, outs={round(out_val, 1)}, noise={round(noise, 1)}...')
+                        train_data = np.random.randint(2, size=(num_nodes, num_patterns))
+                        f.write(f'Training Data:\n{train_data}\n')
 
-                            K, _, _ = train(train_data, loss, np.full(num_nodes, outs), step_size, max_iters, epsilon=0.0001*step_size, noise=noise, report_freq = 0)
-                            f.write(f'Trained weights:\n{K}\n')
-                            trained_allzero = np.count_nonzero(K) == 0
-                            
-                            K_min = grid_search(num_nodes, train_data, outs, loss.fn, [0, 1], resolution=3, noise=noise)
-                            f.write(f'Searched weights:\n{K_min}\n')
-                            searched_allzero = np.count_nonzero(K_min) == 0
+                        K_train, _, _ = train(train_data, loss, np.full(num_nodes, outs), step_size, max_iters, \
+                            epsilon=0.0001*step_size, noise=noise, num_corrupted=num_corrupted, report_freq=-1)
+                        f.write(f'Trained weights:\n{K_train}\n')
+                        trained_allzero += np.count_nonzero(K_train) == 0
+                        
+                        K_search = grid_search(num_nodes, train_data, outs, loss, [0, 1], \
+                            resolution=3, noise=noise, num_corrupted=num_corrupted)
+                        f.write(f'Searched weights:\n{K_search}\n')
+                        searched_allzero += np.count_nonzero(K_search) == 0
 
-                            f.write('\n')
+                        f.write('\n')
 
-                            diff_ct += int(trained_allzero != searched_allzero)
-                            trained_ct += int(trained_allzero)
-                            searched_ct += int(searched_allzero)
-                            total += 1
+                        allzero_diff += int(trained_allzero != searched_allzero)
+                        total += 1
 
-        f.write(f'{trained_ct}/{total} training runs resulted in all zeros\n'
-            f'{searched_ct}/{total} grid searches found optimum to be all zeros\n'
-            f'Training and grid searching disagreed on {diff_ct}/{total} param sets')
+        f.write(f'{trained_allzero}/{total} training runs resulted in all zeros\n'
+            f'{searched_allzero}/{total} grid searches found optimum to be all zeros\n'
+            f'Training and grid searching disagreed on {allzero_diff}/{total} param sets')
 
         
 
@@ -97,3 +98,4 @@ if DO_ANALYSIS:
 # TODO better starting rate parameters in train
 # TODO adagrad? other step size optimizer?
 # TODO add regularization
+
