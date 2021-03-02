@@ -54,6 +54,17 @@ def off_patterns(pat, p_off, num_pats, rng = None):
     out[corrupt_mask < p_off] = -out[corrupt_mask < p_off]
     return [out[i,:] for i in range(num_pats)]
 
+def A_from_rates(K_fret, k_in, k_out):
+    num_nodes = len(k_in)
+    # 0.0048s
+
+    A = -K_fret
+    # 0.0088s
+
+    A[np.diag_indices(num_nodes)] = K_fret.sum(axis=1) + k_in + k_out
+    # 0.030s (161/1500 - 1/12.9)
+
+    return A
 
 def Ainv_from_rates(K_fret, k_in, k_out):
     """
@@ -73,14 +84,7 @@ def Ainv_from_rates(K_fret, k_in, k_out):
             Should be square.
         pred (np.array): The predicted values of each node's output.
     """
-    num_nodes = len(k_in)
-    A = -K_fret
-    diagonal_terms = K_fret.sum(axis=1) + k_in.T + k_out.T
-
-    if K_fret[range(num_nodes), range(num_nodes)].any():
-        raise ValueError(f'diagonal terms not 0 in the rate matrix: \n {K_fret}')
-
-    A[range(num_nodes), range(num_nodes)] = diagonal_terms
+    A = A_from_rates(K_fret, k_in, k_out)
 
     try:
         ret = np.linalg.inv(A)
@@ -88,10 +92,10 @@ def Ainv_from_rates(K_fret, k_in, k_out):
     except:
         raise ValueError(f'Singular matrix for rates={K_fret}, inputs={k_in}, outputs={k_out}')
 
-def k_in_from_input_data(input_data):
-    k_in_sr = np.array([
-        kin for bit in input_data for kin in (max(bit, 0), -min(bit, 0))
-    ])
+def k_in_from_input_data(input_data): # 0.018s/it (98/1000 - 80/1000)
+    k_in_sr = np.empty(len(input_data)*2)
+    k_in_sr[0::2] = np.maximum(input_data, 0)
+    k_in_sr[1::2] = -np.minimum(input_data, 0)
     return k_in_sr
 
 def network_from_rates(K_fret, k_out, k_in):

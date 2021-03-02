@@ -16,10 +16,11 @@ import train_utils
 
 ## Command-line arguments
 
-train_mode = int(sys.argv[1]) # 1 = MC, 2 = GD, 3 = MC+GD
-train_MC = bool(train_mode&1)
-train_GD = bool(train_mode&2)
-train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}' # for file paths
+train_mode = sys.argv[1] # a bitstring ABC; A = MC, B = GD, C = MC-Gibbs
+train_MC = train_mode[0]=='1'
+train_GD = train_mode[1]=='1'
+train_MG = train_mode[2]=='1'
+train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train_MG else ""}' # for file paths
 
 if len(sys.argv) >=3:  seed = int(sys.argv[2])
 else:  seed = np.random.randint(0, 10**6)
@@ -39,8 +40,9 @@ duplication = 20
 # Training parameters
 reps = 1
 #train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
-train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = [.01]*100000, goal_accept_rate = 0.3, init_noise = 2, verbose=True)
+train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = [.1]*100000, goal_accept_rate = 0.3, init_noise = 2, verbose=True)
 train_kwargs_GD = {}
+train_kwargs_MG = dict(low_bound = 1e-2, high_bound = 1e5, anneal_protocol = [.1]*200000, goal_accept_rate = 0.44, init_step_size = 2, warmup_iters = 10000, verbose=True)
 
 # Output parameters
 #outpath = f'/scratch/jberlean/tmp/train{train_str}_{reps}x_seed={seed}.p'
@@ -75,6 +77,8 @@ if train_MC:
   results_MC, train_seeds_MC = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MC, train_data, train_utils.RMSE, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
 if train_GD:
   results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
+if train_MG:
+  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs, train_data, train_utils.RMSE, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
 
 pbar_file.close()
  
@@ -96,16 +100,20 @@ if train_GD:
   output['train_args_GD'] = train_kwargs_GD
   output['train_seeds_GD'] = train_seeds_GD
   output['results_GD'] = results_GD
- 
+if train_MG:
+  output['train_args_MG'] = train_kwargs_MG
+  output['train_seeds_MG'] = train_seeds_MG
+  output['results_MG'] = results_MG
+  
 with open(outpath,'wb') as outfile:
   pickle.dump(output, outfile)
 
 
 # temp plotting code
-_,_,params = zip(*results_MC[0]['raw'])
+_,_,params = zip(*results_MG[0]['raw'])
 params_np = np.log(np.array(params))
 #autocorr = acf(params0, adjusted=True, nlags=len(params0), fft=True)
-autocorr = np.array([acf(params_np[1000:,i], adjusted=True, nlags=len(params)//2, fft=True) for i in range(len(params[0]))])
+autocorr = np.array([acf(params_np[2500:,i], adjusted=True, nlags=len(params)//2, fft=True) for i in range(len(params[0]))])
 autocorr_mean = autocorr.mean(axis=0)
 import matplotlib.pyplot as plt
 plt.ion()

@@ -13,13 +13,21 @@ package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dir not in sys.path:
   sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
 
-from train_utils import off_patterns, Ainv_from_rates, k_in_from_input_data, network_from_rates
+from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates
 
 # TODO: use functions in train_singlerail.py rather than reimplementing them here
 
 ########################
 # GRADIENT CALCULATION #
 ########################
+
+def adjust_Ainv(Ainv, dx, i, j):
+  # As an optimization, if only a single rate has changed we may recompute
+  # A^-1 quickly, using the Sherman-Morrison formula for rank-1 matrix perturbations:
+  #   dAinv = -dx/(1 + dx*(Ainv[i,i] - 2*Ainv[i,j] + Ainv[j,j]) * ((A[:,i] - A[:,j]) @ (A[i,:] - A[j,:]))
+  coef = -dx / (1 + dx * (Ainv[i,i] + Ainv[j,j] - 2*Ainv[i,j]))
+  dAinv = np.outer(coef*(Ainv[i,:] - Ainv[j,:]), Ainv[i,:] - Ainv[j,:])
+  return Ainv + dAinv
 
 def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
     """
@@ -39,9 +47,28 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
     Returns:
         pred (np.array): The predicted values of each node's output.
     """
-    if Ainv is None:  Ainv = Ainv_from_rates(rate_matrix, output_rates, input_rates)
+#    if Ainv is None:  Ainv = Ainv_from_rates(rate_matrix, output_rates, input_rates)
 
-    pred = Ainv @ input_rates
+#    pred = Ainv @ input_rates
+    if Ainv is None:
+      num_nodes = len(input_rates)
+      A = -rate_matrix
+      A[np.diag_indices(num_nodes)] = rate_matrix.sum(axis=1) + input_rates + output_rates
+      pred = np.linalg.solve(A, input_rates)
+    else:
+      pred = Ainv @ input_rates
+
+#    num_nodes = len(input_rates)
+#    A = -rate_matrix
+#    A[np.diag_indices(num_nodes)] = rate_matrix.sum(axis=1) + input_rates + output_rates
+#    # 0.025s (154/1500 - 1/12.9)
+#
+#    pred = A @ input_rates
+#    # 0.033s (166/1500 - 1/12.9)
+
+#    A = A_from_rates(rate_matrix, output_rates, input_rates) # 0.030s
+#    pred = np.ones(len(output_rates))
+
 #    print(pred)
 #    print(output_rates)
     return pred * output_rates
@@ -73,15 +100,19 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv 
             Should be a length-2n 1d array.
         
     """
+    # 0.76s/iter (101/1000 - 25/1000)
+
     num_nodes_dr = len(input_pattern)
     num_nodes_sr = 2*num_nodes_dr
+#****
+#    return np.zeros(num_nodes_dr), np.zeros(num_nodes_sr)
 
     # Determine equivalent single-rail input rates based on dual-rail input pattern
     input_rates_sr = k_in_from_input_data(input_pattern)
 
     output_sr = calc_network_output_sr(rate_matrix_sr, input_rates_sr, output_rates_sr, Ainv = Ainv)
 
-    output_dr = output_sr[range(0, num_nodes_sr, 2)] - output_sr[range(1, num_nodes_sr, 2)]
+    output_dr = output_sr[0::2] - output_sr[1::2]
 #    print(output_sr)
 #    print(output_dr)
 
@@ -271,6 +302,136 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
   #    print(f'Monte Carlo optimization results: {f_cur}')
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
+
+def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, verbose=False):
+    def rates_to_params(K_fret, k_out):
+        idxs = np.triu_indices(num_nodes_sr, 1)
+        params = np.concatenate((K_fret[idxs], k_out))
+        return params
+    def params_to_rates(p):
+        K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
+        for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)):
+            K_fret[i,j] = p[idx]
+            K_fret[j,i] = p[idx]
+        k_out = 100*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
+#        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
+#        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
+        return K_fret, k_out
+
+    def loss_func(params, Ainvs):
+        K_fret, k_out = params_to_rates(params)
+
+        resid = (np.array([
+            loss.fn(
+                calc_network_output_dr(
+                    input_data,
+                    K_fret,
+                    k_out,
+                    Ainv = Ainv
+                )[0],
+                output_data_cor
+            ) 
+            for (input_data,output_data_cor),Ainv in zip(train_data, Ainvs)
+        ])**2).sum()
+        # 65/1000 - 1/1000
+
+#        f = lambda x: loss.fn(calc_network_output_dr(x[0], K_fret, k_out)[0], x[1])
+#
+#        resid = (np.fromiter(map(f, train_data), dtype=float)**2).sum()
+#        # 91/1000 - 1/1000
+
+
+#        resid = np.zeros(len(train_data))
+
+        return resid
+
+    rng = np.random.default_rng(seed)
+
+    num_nodes_dr = len(train_data[0][0])
+    num_nodes_sr = 2*num_nodes_dr
+
+    num_params = num_nodes_sr*(num_nodes_sr-1)//2
+
+    if anneal_protocol is None:
+      anneal_protocol = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
+
+    accept_hist_len = 50
+
+    init_params = np.exp(rng.uniform(np.log(low_bound), np.log(high_bound), num_params))
+    init_K_fret, init_k_out = params_to_rates(init_params)
+
+    params_cur = init_params
+    Ainvs_cur = [Ainv_from_rates(init_K_fret, k_in_from_input_data(input_data), init_k_out) for input_data,_ in train_data]
+    f_cur = loss_func(params_cur, Ainvs_cur)
+
+    step_size = init_step_size*np.ones(num_params)
+    step_size_adjust = 1.02
+
+    params_hist = []
+    accept_hist = -1*np.ones((accept_hist_len, num_params), dtype=int)
+    for i, T in tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol)):
+      steps = rng.normal(0, step_size, num_params)
+      for p_idx, (node_in, node_out) in enumerate(zip(*np.triu_indices(num_nodes_sr, 1))):
+        param_cur = params_cur[p_idx]
+        param_new = param_cur * np.exp(steps[p_idx])
+
+        params_new = params_cur.copy()
+        params_new[p_idx] = param_new
+  
+        if param_new > high_bound or param_new < low_bound: # throw out any moves outside the bounding box
+          f_new = np.inf
+        else:
+          Ainvs_new = [adjust_Ainv(Ainv, param_new - param_cur, node_in, node_out) for Ainv in Ainvs_cur]
+          f_new = loss_func(params_new, Ainvs_new)
+
+        df = max(f_new - f_cur, 0)
+        accept_prob = np.exp(-df/T) 
+        accept = False
+        if rng.uniform(0,1) < accept_prob:
+          params_cur = params_new
+          Ainvs_cur = Ainvs_new
+          f_cur = f_new
+          accept = True
+  
+        accept_hist[i%accept_hist_len, p_idx] = accept
+
+#      print(accept_hist[i%accept_hist_len, :])
+      if i % accept_hist_len == accept_hist_len-1 and i < warmup_iters:
+        step_size *= step_size_adjust ** (np.sign(np.mean(accept_hist, axis=0)-goal_accept_rate))
+
+#        print(step_size)
+#      if np.mean(accept_hist) > goal_accept_rate:
+#        noise *= 1.002
+#      elif np.mean(accept_hist) < goal_accept_rate:
+#        noise /= 1.002
+
+      if i%500 == 0: # every 500 iterations, recompute the A^-1 matrices in case of accumulated numerical errors
+        K_fret, k_out = params_to_rates(params_cur)
+        Ainvs_new = [
+            Ainv_from_rates(
+                K_fret, 
+                k_in_from_input_data(input_data), 
+                k_out
+            )
+            for input_data,_ in train_data
+        ]
+        max_err = max(np.sum((Ainv_n - Ainv_c)**2) for Ainv_n, Ainv_c in zip(Ainvs_new, Ainvs_cur))
+        if max_err > 1e-5:
+          print(f'WARNING: Accumulated numerical error in computation of A^-1 led to discrepancies of {max_err}')
+
+        Ainvs_cur = Ainvs_new
+
+      if verbose and i%500 == 0:
+        print(i, T, f_cur, params_cur)
+        print(i, np.mean(accept_hist, axis=0), step_size)
+
+      params_hist.append((T, f_cur, params_cur))
+
+  
+  #    print(f'Monte Carlo optimization results: {f_cur}')
+   
+    return (*params_to_rates(params_cur), f_cur, params_hist)
+
 
 def train_dr_multiple_aux(args):
     train_func, train_data, loss, seed, train_kwargs = args
