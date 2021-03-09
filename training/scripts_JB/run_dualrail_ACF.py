@@ -40,9 +40,9 @@ duplication = 20
 # Training parameters
 reps = 1
 #train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
-train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = [.1]*100000, goal_accept_rate = 0.3, init_noise = 2, verbose=True)
+train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = [1]*100000, goal_accept_rate = 0.3, init_noise = 2, verbose=True)
 train_kwargs_GD = {}
-train_kwargs_MG = dict(low_bound = 1e-2, high_bound = 1e5, anneal_protocol = [.1]*200000, goal_accept_rate = 0.44, init_step_size = 2, warmup_iters = 10000, verbose=True)
+train_kwargs_MG = dict(low_bound = 1e-2, high_bound = 1e5, anneal_protocol = [1]*500 + list(np.arange(1, .1, 1e-3)) + [.1]*10000, goal_accept_rate = 0.44, init_step_size = 2, warmup_iters = 3900, verbose=True)
 
 # Output parameters
 #outpath = f'/scratch/jberlean/tmp/train{train_str}_{reps}x_seed={seed}.p'
@@ -113,7 +113,7 @@ with open(outpath,'wb') as outfile:
 _,_,params = zip(*results_MG[0]['raw'])
 params_np = np.log(np.array(params))
 #autocorr = acf(params0, adjusted=True, nlags=len(params0), fft=True)
-autocorr = np.array([acf(params_np[2500:,i], adjusted=True, nlags=len(params)//2, fft=True) for i in range(len(params[0]))])
+autocorr = np.array([acf(params_np[3900:,i], adjusted=True, nlags=len(params)//2, fft=True) for i in range(len(params[0]))])
 autocorr_mean = autocorr.mean(axis=0)
 import matplotlib.pyplot as plt
 plt.ion()
