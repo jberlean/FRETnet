@@ -1,8 +1,9 @@
 import os, sys
 import itertools as it
-import pickle, json
+import pickle
 import math
 import multiprocessing as mp
+import importlib.util
 
 import numpy as np
 from scipy.optimize import brute
@@ -15,7 +16,7 @@ import train_utils
 
 ## Command-line arguments
 
-train_mode = int(sys.argv[1]) # a bitstring ABC; A = MC, B = GD, C = MC-Gibbs
+train_mode = sys.argv[1] # a bitstring ABC; A = MC, B = GD, C = MC-Gibbs
 train_MC = train_mode[0]=='1'
 train_GD = train_mode[1]=='1'
 train_MG = train_mode[2]=='1'
@@ -23,8 +24,10 @@ train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train
 
 if len(sys.argv) >= 3: 
   user_args_path = sys.argv[2]
-  with open(user_args_path, 'r') as user_args_file:
-    user_args = json.load(user_args_file)
+  user_args_spec = importlib.util.spec_from_file_location('user_args', user_args_path)
+  user_args = importlib.util.module_from_spec(user_args_spec)
+  user_args_spec.loader.exec_module(user_args)
+  user_args = user_args.__dict__
 else:
   user_args = {}
 
@@ -44,21 +47,21 @@ noise = user_args.get('train_data_noise', 0.1)
 duplication = user_args.get('train_data_duplication', 20)
 
 # Training parameters
-reps = user_args.get('reps', 500)
+reps = user_args.get('reps', 1)
 
 train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
 train_kwargs_GD = {}
-train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
+train_kwargs_MG = dict(low_bound = 1e-2, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.44, init_step_size = 2, warmup_iters=0, verbose = False)
 
-train_kwargs_MC.update(user_args.get('train_kwargs_MC', {})
-train_kwargs_GD.update(user_args.get('train_kwargs_GD', {})
-train_kwargs_MG.update(user_args.get('train_kwargs_MG', {})
+train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
+train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
+train_kwargs_MG.update(user_args.get('train_kwargs_MG', {}))
 
 processes = user_args.get('processes', 1)
 
 # Output parameters
-outputdir = user_args.get('outputdir', f'/scratch/jberlean/tmp/{seed}/train{train_str}_{reps}x_seed={seed}.p')
-#outputdir = f'tmp/{seed}'
+#outputdir = user_args.get('outputdir', f'/scratch/jberlean/tmp/{seed}/train{train_str}_{reps}x_seed={seed}.p')
+outputdir = f'tmp/{seed}'
 pbarpath = os.path.join(outputdir, f'pbar{train_str}_seed={seed}')
 outpath = os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}.p')
 
@@ -92,7 +95,7 @@ if train_MC:
 if train_GD:
   results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
 if train_MG:
-  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
+  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
   
 
 pbar_file.close()
