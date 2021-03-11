@@ -1,6 +1,6 @@
 import os, sys
 import itertools as it
-import pickle
+import pickle, json
 import math
 import multiprocessing as mp
 
@@ -15,38 +15,56 @@ import train_utils
 
 ## Command-line arguments
 
-train_mode = int(sys.argv[1]) # 1 = MC, 2 = GD, 3 = MC+GD
-train_MC = bool(train_mode&1)
-train_GD = bool(train_mode&2)
-train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}' # for file paths
+train_mode = int(sys.argv[1]) # a bitstring ABC; A = MC, B = GD, C = MC-Gibbs
+train_MC = train_mode[0]=='1'
+train_GD = train_mode[1]=='1'
+train_MG = train_mode[2]=='1'
+train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train_MG else ""}' # for file paths
 
-if len(sys.argv) >=3:  seed = int(sys.argv[2])
-else:  seed = np.random.randint(0, 10**6)
-rng = np.random.default_rng(seed)
+if len(sys.argv) >= 3: 
+  user_args_path = sys.argv[2]
+  with open(user_args_path, 'r') as user_args_file:
+    user_args = json.load(user_args_file)
+else:
+  user_args = {}
 
 
 ## Training parameters
 
+# Random seed for training
+seed = user_args.get('seed', np.random.randint(0, 10**6))
+rng = np.random.default_rng(seed)
+
 # Parameters for generating stored memories
-num_nodes = 4
-num_patterns = 3
+num_nodes = user_args.get('num_nodes', 4)
+num_patterns = user_args.get('num_patterns', 3)
 
 # Parameters for generating training data
-noise = 0.1
-duplication = 20
+noise = user_args.get('train_data_noise', 0.1)
+duplication = user_args.get('train_data_duplication', 20)
 
 # Training parameters
-reps = 3
-train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2)
+reps = user_args.get('reps', 500)
+
+train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
 train_kwargs_GD = {}
+train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
+
+train_kwargs_MC.update(user_args.get('train_kwargs_MC', {})
+train_kwargs_GD.update(user_args.get('train_kwargs_GD', {})
+train_kwargs_MG.update(user_args.get('train_kwargs_MG', {})
+
+processes = user_args.get('processes', 1)
 
 # Output parameters
-#outpath = f'/scratch/jberlean/tmp/train{train_str}_{reps}x_seed={seed}.p'
-outputdir = f'tmp/{seed}'
+outputdir = user_args.get('outputdir', f'/scratch/jberlean/tmp/{seed}/train{train_str}_{reps}x_seed={seed}.p')
+#outputdir = f'tmp/{seed}'
 pbarpath = os.path.join(outputdir, f'pbar{train_str}_seed={seed}')
 outpath = os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}.p')
 
 os.makedirs(os.path.dirname(outpath), exist_ok=True)
+
+print(f'Output directory: {outputdir}')
 
 
 ## Run code
@@ -70,9 +88,12 @@ train_seed_base = rng.integers(0, 10**6)
 pbar_file = open(pbarpath, 'w')
 
 if train_MC:
-  results_MC, train_seeds_MC = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MC, train_data, train_utils.RMSE, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
+  results_MC, train_seeds_MC = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MC, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
 if train_GD:
-  results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = 3, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
+  results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
+if train_MG:
+  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
+  
 
 pbar_file.close()
  
@@ -94,6 +115,10 @@ if train_GD:
   output['train_args_GD'] = train_kwargs_GD
   output['train_seeds_GD'] = train_seeds_GD
   output['results_GD'] = results_GD
+if train_MG:
+  output['train_args_MG'] = train_kwargs_MG
+  output['train_seeds_MG'] = train_seeds_MG
+  output['results_MG'] = results_MG
  
 with open(outpath,'wb') as outfile:
   pickle.dump(output, outfile)
