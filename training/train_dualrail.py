@@ -303,7 +303,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
 
-def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -369,7 +369,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anne
 
     params_hist = []
     accept_hist = -1*np.ones((accept_hist_len, num_params), dtype=int)
-    for i, T in tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol)):
+    for i, T in tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file):
       steps = rng.normal(0, step_size, num_params)
       for p_idx, (node_in, node_out) in enumerate(zip(*np.triu_indices(num_nodes_sr, 1))):
         param_cur = params_cur[p_idx]
