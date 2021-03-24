@@ -39,6 +39,7 @@ seed = user_args.get('seed', np.random.randint(0, 10**6))
 rng = np.random.default_rng(seed)
 
 # Parameters for generating stored memories
+stored_data_user = user_args.get('stored_data', None)
 num_nodes = user_args.get('num_nodes', 4)
 num_patterns = user_args.get('num_patterns', 3)
 
@@ -73,11 +74,15 @@ print(f'Output directory: {outputdir}')
 ## Run code
 
 # Generate stored memories
-stored_data_ints = rng.permutation(2**num_nodes)[:num_patterns]
-stored_data = [
-    np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
-    for i in stored_data_ints
-]
+if stored_data_user is None:
+  stored_data_ints = rng.permutation(2**num_nodes)[:num_patterns]
+  stored_data = [
+      np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
+      for i in stored_data_ints
+  ]
+else:
+  stored_data_ints = rng.permutation(2**num_nodes)[:num_patterns] # to make sure RNG is in the same state
+  stored_data = list(map(np.array, stored_data_user))
 
 print('Stored data:')
 for d in stored_data:
