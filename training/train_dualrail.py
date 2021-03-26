@@ -433,24 +433,42 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anne
     return (*params_to_rates(params_cur), f_cur, params_hist)
 
 
-def train_dr_multiple_aux(args):
+def train_dr_multiple_multiprocessing_aux(args):
     train_func, train_data, loss, seed, train_kwargs = args
     return train_func(train_data, loss, seed=seed, **train_kwargs)
-def train_dr_multiple(train_func, train_data, loss, processes = None, reps = 10, pbar_file = None, seed = None, **train_kwargs):
+def train_dr_multiple_multiprocessing(train_func, train_data, loss, processes, reps, pbar_file, seed, **train_kwargs):
     rng = np.random.default_rng(seed)
     
     seeds = [rng.integers(0, 10**6) for _ in range(reps)]
 
-    if pbar_file is None:  pbar_file = sys.stderr # default for tqdm
-
-    if processes is None:  processes = os.cpu_count()
-
     results = []
     with mp.Pool(processes=processes) as pool:
       args_lst = [(train_func, train_data, loss, seed, train_kwargs) for seed in seeds]
-      results_it = pool.imap(train_dr_multiple_aux, args_lst)
+      results_it = pool.imap(train_dr_multiple_multiprocessing_aux, args_lst)
       for res in tqdm.tqdm(results_it, total=reps, file=pbar_file):
         results.append(dict(zip(['K_fret', 'k_out', 'cost', 'raw'], res)))
+
+    return results, seeds
+
+def train_dr_multiple_singleprocessing(train_func, train_data, loss, reps, pbar_file, seed, **train_kwargs):
+    rng = np.random.default_rng(seed)
+    
+    seeds = [rng.integers(0, 10**6) for _ in range(reps)]
+
+    results = []
+    for train_seed in tqdm.tqdm(seeds, file=pbar_file):
+      res = train_func(train_data, loss, seed=seed, **train_kwargs)
+      results.append(dict(zip(['K_fret', 'k_out', 'cost', 'raw'], res)))
+
+    return results, seeds
+
+def train_dr_multiple(train_func, train_data, loss, processes = None, reps = 10, pbar_file = None, seed = None, **train_kwargs):
+    if pbar_file is None:  pbar_file = sys.stderr # default for tqdm
+
+    if processes is None:
+      results, seeds = train_dr_multiple_singleprocessing(train_func, train_data, loss, reps, pbar_file, seed, **train_kwargs)
+    else:
+      results, seeds = train_dr_multiple_multiprocessing(train_func, train_data, loss, processes, reps, pbar_file, seed, **train_kwargs)
 
 
     return results, seeds
