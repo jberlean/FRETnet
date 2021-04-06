@@ -131,11 +131,12 @@ def train(train_data, loss, output_rates, step_size, max_iters, epsilon=None, no
         K_over_time = np.append(K_over_time, new_K.reshape(1, d, d), axis=0)
 
         # Stopping condition based on epsilon
-        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon and report_freq >= 0:
-            print(f'Stopped at iteration {i+1}\n'
-                    f'K: {new_K}\n'
-                    f'error: {avg_err}\n'
-                    f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
+        if epsilon is not None and np.linalg.norm(new_K - K) < epsilon:
+            if report_freq >= 0:
+                print(f'Stopped at iteration {i+1}\n'
+                        f'K: {new_K}\n'
+                        f'error: {avg_err}\n'
+                        f'Change in loss for last iter: {np.linalg.norm(new_K - K)}')
             return new_K, err_over_time, K_over_time
     
         if report_freq > 0 and (i) % report_freq == 0:
