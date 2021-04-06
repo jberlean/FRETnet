@@ -251,3 +251,99 @@ class DualRailNetworkPlot(object):
     ax.clear()
     nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, width=edge_weights)
 
+
+##################################
+# t-SNE ANALYSIS VISUALIZATION
+##################################
+
+def plot_dualrail_tsne(num_nodes, num_pixels, data, data_tsne, colors):
+  num_pts, num_params = data.shape
+  node_names = [f'{i+1}{pm}' for i in range(num_pixels) for pm in '+-']
+
+  fig, axes = plt.subplots(1,3)
+  scatter_ax, detail_ax, network_ax = axes
+
+  scatter = scatter_ax.scatter(data_tsne[:,0], data_tsne[:,1], marker='.', c=colors, picker=True, ec=None)
+
+  # make components for detail axes
+  detail_ax.set_xlim(-.5, num_nodes-.5)
+  detail_ax.set_ylim(num_nodes-.5, -.5)
+  detail_ax.set_xticks(np.arange(num_nodes))
+  detail_ax.set_yticks(np.arange(num_nodes))
+  detail_ax.set_xticklabels(node_names)
+  detail_ax.set_yticklabels(node_names)
+
+  # make components for network axes
+  network_ax.clear()
+  network_ax.axis('square')
+
+  network = nx.Graph()
+  node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*num_pixels) for i in range(num_pixels) for isneg in [0,1]]
+  node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(node_names, node_angles)}
+  edges = [(node_names[i1], node_names[i2]) for i1,i2 in zip(*np.triu_indices(num_nodes,1))]
+  network.add_nodes_from(node_names)
+  network.add_edges_from(edges)
+
+  def identify_node_clusters(nodes, edge_weights, threshold = .5):
+    weights_dict = {(a,b): w for i1,i2,w in zip(*np.triu_indices(len(nodes),1), edge_weights) for a,b in [(nodes[i1],nodes[i2]), (nodes[i2],nodes[i1])]}
+
+    nodes_left = set(nodes)
+    clusters = []
+    while len(nodes_left) > 0:
+      node = nodes_left.pop()
+      
+      cur_cluster = {node}
+      to_process = {node}
+      while len(to_process) > 0:
+        new_node = to_process.pop()
+        for n in set(nodes_left):
+          if weights_dict[(n, new_node)] >= threshold:
+            to_process.add(n)
+            cur_cluster.add(n)
+            nodes_left.remove(n)
+      clusters.append(cur_cluster)
+    return clusters
+           
+  def show_point_details(idx):
+    data_sel = data[idx, :]
+    
+    # highlight selected point
+    scatter.set_edgecolors([(0,0,0,0)]*idx + ['k'] + [(0,0,0,0)]*(num_pts-idx-1))
+
+    # plot on detail axes each parameter set
+    mat = np.zeros((num_nodes, num_nodes))
+    mat[np.triu_indices(num_nodes, 1)] = data_sel
+    mat = mat + mat.T
+    detail_ax.clear()
+    detail_ax.matshow(mat, vmin=0, vmax=1, origin='upper', cmap='gray_r')
+    detail_ax.set_xticks(np.arange(num_nodes))
+    detail_ax.set_yticks(np.arange(num_nodes))
+    detail_ax.set_xticklabels(node_names)
+    detail_ax.set_yticklabels(node_names)
+
+    # plot on network axes the network for the first point in event.ind (could hcange to closest point)
+    node_clusters = identify_node_clusters(node_names, data_sel)
+    colors = ['tab:blue','tab:orange','tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
+    node_color_dict = {n: color for cluster, color in zip(node_clusters, colors) for n in cluster}
+    node_color = [node_color_dict[n] for n in node_names]
+    edges = [(node_names[i1], node_names[i2], w) for i1,i2,w in zip(*np.triu_indices(num_nodes,1), data_sel)]
+    network_ax.clear()
+#    nx.draw_networkx(network, pos = node_pos, ax = network_ax, with_labels=True, node_color=node_color, node_size=400, width=data_sel*4)
+    network.add_weighted_edges_from(edges)
+    spring_pos = nx.drawing.layout.spring_layout(network, pos=node_pos, fixed=['1+'])
+    nx.draw_networkx(network, pos = spring_pos, ax = network_ax, with_labels=True, node_color=node_color, node_size=400, width=data_sel*4)
+#    nx.draw_networkx(network, ax = network_ax, with_labels=True, node_color='#CCC', node_size=400, width=data_sel*4)
+
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+
+
+  def scatter_pick_handler(event):
+    #if event.artist != scatter:  return
+
+    clickx, clicky = event.mouseevent.xdata, event.mouseevent.ydata
+
+    sel_idx = event.ind[np.argmin(np.hypot(data_tsne[event.ind,0]-clickx, data_tsne[event.ind,1]-clicky))]
+    show_point_details(sel_idx)
+
+  fig.canvas.mpl_connect('pick_event', scatter_pick_handler)
