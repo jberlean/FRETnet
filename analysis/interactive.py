@@ -9,7 +9,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 plt.ion()
 
-pkg_path = pathlib.Path(__file__).parent.parent.absolute()
+pkg_path = str(pathlib.Path(__file__).absolute().parent.parent)
 if pkg_path not in sys.path:
   sys.path.append(pkg_path)
 import analysis.analyze as analyze

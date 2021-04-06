@@ -5,7 +5,7 @@ import itertools as it
 import numpy as np
 
 # INTRAPACKAGE IMPORTS
-pkg_path = pathlib.Path(__file__).parent.parent.absolute()
+pkg_path = str(pathlib.Path(__file__).absolute().parent.parent)
 if pkg_path not in sys.path:
   sys.path.append(pkg_path)
 from objects import utils as objects
