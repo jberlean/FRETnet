@@ -5,8 +5,9 @@ import copy
 
 import networkx as nx
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
-plt.ion
+plt.ion()
 
 pkg_path = pathlib.Path(__file__).parent.parent.absolute()
 if pkg_path not in sys.path:
@@ -230,15 +231,15 @@ class DualRailNetworkPlot(object):
     vals_img_out = list(map(self.pixel_output, self._pixels))
     mat_img_out = np.array(vals_img_out).reshape((self.image_rows, self.image_cols))
 
-    vals_net_in = list(map(self.node_input, self._nodes))
-    vals_net_out = list(map(self.node_output, self._nodes))
+    vals_net_in = np.array(list(map(self.node_input, self._nodes)))
+    vals_net_out = np.array(list(map(self.node_output, self._nodes)))
 
     return mat_img_in, mat_img_out, vals_net_in, vals_net_out
 
 
   def _draw_image(self, img_data, ax):
     ax.clear()
-    ax.matshow(img_data, vmin = -self._k_in, vmax = self._k_in, cmap = 'gray_r')
+    ax.matshow(img_data, vmin = -self._input_magnitude, vmax = self._input_magnitude, cmap = 'gray_r')
     ax.set_xticks(np.arange(self.image_cols))
     ax.set_yticks(np.arange(self.image_rows))
 
