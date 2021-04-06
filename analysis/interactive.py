@@ -63,6 +63,7 @@ class DualRailNetworkPlot(object):
     self._ax_net_in, self._ax_net_out = None, None
 
     self._network_nx, self._network_nx_node_pos = self._init_network_nx(self._network)
+    self._network_nx_node_pos = self._calc_network_node_pos_spring()
 
     # network inputs/outputs
     self._network_input = np.zeros(len(self._nodes))
@@ -95,9 +96,18 @@ class DualRailNetworkPlot(object):
     network_nx.add_weighted_edges_from([(node_names[i1], node_names[i2], 4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2])) for i1,i2 in zip(*np.triu_indices(num_nodes, 1))])
 
     node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
-    network_nx_node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
+    node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
 
-    return network_nx, network_nx_node_pos
+    return network_nx, node_pos
+
+  def _calc_network_node_pos_circular(self):
+    node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
+    circular_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
+    return circular_pos
+  def _calc_network_node_pos_spring(self):
+    node_pos = self._calc_network_node_pos_circular()
+    spring_pos = nx.drawing.layout.spring_layout(self._network_nx, pos=node_pos, fixed=['1+'])
+    return spring_pos
     
 
   # Network properties
@@ -224,6 +234,16 @@ class DualRailNetworkPlot(object):
     self._figure.canvas.draw()
     self._figure.canvas.flush_events()
     
+  def set_network_plot_mode(self, mode = 'spring'):
+    if mode == 'spring':
+      self._network_nx_node_pos = self._calc_network_node_pos_spring()
+      self.update_plot()
+    elif mode == 'circular':
+      self._network_nx_node_pos = self._calc_network_node_pos_circular()
+      self.update_plot()
+    else:
+      print(f'WARNING: Unknown plot mode {mode}')
+
   def _collect_plot_data(self):
     vals_img_in = list(map(self.pixel_input, self._pixels))
     mat_img_in = np.array(vals_img_in).reshape((self.image_rows, self.image_cols))
@@ -249,7 +269,7 @@ class DualRailNetworkPlot(object):
     _,_,edge_weights = zip(*self._network_nx.edges.data('weight'))
 
     ax.clear()
-    nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, width=edge_weights)
+    nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, font_color=(.5,.5,.5), font_weight='bold', edgecolors='k', width=edge_weights)
 
 
 ##################################
