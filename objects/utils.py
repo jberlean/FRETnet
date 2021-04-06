@@ -63,9 +63,17 @@ class Node(object):
   @property
   def decay_rate(self):
     return self._decay_rate
+  @decay_rate.setter
+  def decay_rate(self, k):
+    self._decay_rate = k
+    self.update()
   @property
   def emit_rate(self):
     return self._emit_rate
+  @emit_rate.setter
+  def emit_rate(self, k):
+    self._emit_rate = k
+    self.update()
 
   @property
   def status(self):
@@ -130,6 +138,13 @@ class Node(object):
 
     return rxn
 
+  def __str__(self):
+    return f"Node('{self._name}')"
+
+  def __repr__(self):
+    return str(self)
+   
+
 class InputNode(Node):
   def __init__(self, name, in_edges = [], out_edges = [], decay_rate = 0.0, emit_rate = 1.0, production_rate = 0.0, status = False):
     super().__init__(name, in_edges, out_edges, decay_rate, emit_rate, status)
@@ -139,6 +154,10 @@ class InputNode(Node):
   @property
   def production_rate(self):
     return self._production_rate
+  @production_rate.setter
+  def production_rate(self, k):
+    self._production_rate = k
+    self.update()
 
   def _update_reactions(self):
     # populate list of reactions
@@ -148,6 +167,7 @@ class InputNode(Node):
         Reaction('emit', input=self, rate=self.emit_rate)
     ] + [self._make_reaction(edge) for edge in self.out_edges]
     self._reactions = rxns
+
 
 class Edge(object):
   def __init__(self, input, output, rate):
@@ -162,6 +182,13 @@ class Edge(object):
   @property
   def rate(self):  return self._rate
 
+  def __str__(self):
+    return f"Edge({self._input} -> {self._output})"
+
+  def __repr__(self):
+    return str(self)
+
+
 class Network(object):
   def __init__(self, nodes = []):
     self._nodes = nodes[:]
@@ -173,6 +200,18 @@ class Network(object):
   @property
   def nodes(self):
     return self._nodes[:]
+
+  def compute_kfret_matrix(self):
+    num_nodes = len(self._nodes)
+    node_idxs = {n:i for i,n in enumerate(self._nodes)}
+
+    K = np.zeros((num_nodes, num_nodes))
+    for i,node in enumerate(self._nodes):
+      for e in node.out_edges:
+        j = node_idxs[e.output]
+        K[i,j] = e.rate
+
+    return K
 
   def choose_reaction(self):
     node_propensities = np.array([n.propensity() for n in self._nodes])
@@ -212,3 +251,24 @@ class Network(object):
     cts = self._stats.get(('*', node, '*'), 0)
 
     return cts/self._time
+
+######
+# CONVENIENCE FUNCTIONS
+######
+
+def network_from_rates(K_fret, k_out, k_in, node_names = None):
+    num_nodes = len(k_out)
+
+    if node_names is None:
+      node_names = [f'node{i}' for i in range(num_nodes)]
+    elif len(node_names) < num_nodes:
+      node_names.extend([f'node{i}' for i in range(len(node_names), num_nodes)])
+
+    nodes = [InputNode(name, production_rate=k_in_i, emit_rate=k_out_i) for name,k_out_i,k_in_i in zip(node_names, k_out, k_in)]
+    for i,j in it.product(range(num_nodes), range(num_nodes)):
+        if i==j:  continue
+        nodes[j].add_input(nodes[i], K_fret[i,j])
+
+    return Network(nodes)
+
+

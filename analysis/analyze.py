@@ -1,9 +1,13 @@
-import  sys, os
+import sys
+import pathlib
 import itertools as it
+
 import numpy as np
 
 # INTRAPACKAGE IMPORTS
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+pkg_path = pathlib.Path(__file__).parent.parent.absolute()
+if pkg_path not in sys.path:
+  sys.path.append(pkg_path)
 from objects import utils as objects
 
 # Basic functions for computing behavior of FRETnets
@@ -12,6 +16,11 @@ from objects import utils as objects
 #   - Probability of each network state (excited/ground state of each node)
 #   - Flux from each node out of the network
 #   - Total flux out of each node (including both transfers within and out of the network)
+
+
+##################################
+# GENERIC STEADY-STATE BEHAVIOR ANALYSIS
+##################################
 
 def probability_by_node(network, hanlike=True):
   """ Computes the probability of each node being excited at steady state.
@@ -204,16 +213,17 @@ def _probability_by_node_hanlike(network):
   for i,node in enumerate(nodes):
     out_edges = node.out_edges
 
-    if isinstance(node, InputNode):
+    if isinstance(node, objects.InputNode):
       k_in[i] = node.production_rate
     else:
       k_in[i] = 0.0
 
     Di = sum(e.rate for e in out_edges) + node.decay_rate + node.emit_rate + k_in[i]
+    A[i,i] = Di
 
     for e in out_edges:
       j = node_idxs[e.output]
-      A[i,j] = e.rate
+      A[i,j] = -e.rate
 
   # Check symmetric (but try to do the computation regardless)
   if not (A.T == A).all():
@@ -261,11 +271,14 @@ def _node_outputs_hanlike(network):
   prob_vector = np.array([probs[n] for n in nodes])
   k_out = np.array([n.emit_rate+n.decay_rate for n in nodes])
 
-  return prob_vector * k_out
+  node_outputs = dict(zip(nodes, prob_vector*k_out))
+  return node_outputs
 
 def _node_outputs_general(network):
   nodes = network.nodes
   node_probs = _probability_by_node_general(network)
 
-  node_outputs = {node_probs[node]*(node.emit_rate+node.decay_rate) for node in nodes}
+  node_outputs = {node:node_probs[node]*(node.emit_rate+node.decay_rate) for node in nodes}
   return node_outputs
+
+
