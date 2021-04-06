@@ -93,7 +93,8 @@ class DualRailNetworkPlot(object):
     network_nx.add_nodes_from(node_names)
 
     kfret_matrix = network.compute_kfret_matrix()
-    network_nx.add_weighted_edges_from([(node_names[i1], node_names[i2], 4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2])) for i1,i2 in zip(*np.triu_indices(num_nodes, 1))])
+    for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kfret_matrix[i1,i2]/(100+kfret_matrix[i1,i2]), spring_weight=4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2]))
 
     node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
@@ -106,7 +107,7 @@ class DualRailNetworkPlot(object):
     return circular_pos
   def _calc_network_node_pos_spring(self):
     node_pos = self._calc_network_node_pos_circular()
-    spring_pos = nx.drawing.layout.spring_layout(self._network_nx, pos=node_pos, fixed=['1+'])
+    spring_pos = nx.drawing.layout.spring_layout(self._network_nx, pos=node_pos, fixed=['1+'], weight='spring_weight')
     return spring_pos
     
 
@@ -267,6 +268,7 @@ class DualRailNetworkPlot(object):
     node_colors = [[1-max(min(v,1),0)]*3 for v in node_values]
 
     _,_,edge_weights = zip(*self._network_nx.edges.data('weight'))
+#    edge_weights = 4*np.array(edge_weights)
 
     ax.clear()
     nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, font_color=(.5,.5,.5), font_weight='bold', edgecolors='k', width=edge_weights)
