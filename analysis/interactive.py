@@ -2,6 +2,7 @@ import sys
 import pathlib
 import math
 import copy
+import itertools as it
 
 import networkx as nx
 import numpy as np
@@ -61,6 +62,7 @@ class DualRailNetworkPlot(object):
     self._figure = None
     self._ax_img_in, self._ax_img_out = None, None
     self._ax_net_in, self._ax_net_out = None, None
+    self._image_plot_mode = 'threshold'
 
     self._network_nx, self._network_nx_node_pos = self._init_network_nx(self._network)
     self._network_nx_node_pos = self._calc_network_node_pos_spring()
@@ -94,7 +96,7 @@ class DualRailNetworkPlot(object):
 
     kfret_matrix = network.compute_kfret_matrix()
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
-      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kfret_matrix[i1,i2]/(100+kfret_matrix[i1,i2]), spring_weight=4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2]))
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kfret_matrix[i1,i2]/(100+kfret_matrix[i1,i2]), pring_weight=4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2]))
 
     node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
@@ -245,6 +247,10 @@ class DualRailNetworkPlot(object):
     else:
       print(f'WARNING: Unknown plot mode {mode}')
 
+  def set_image_plot_mode(self, mode = 'threshold'):
+    self._image_plot_mode = mode
+    self.update_plot()
+
   def _collect_plot_data(self):
     vals_img_in = list(map(self.pixel_input, self._pixels))
     mat_img_in = np.array(vals_img_in).reshape((self.image_rows, self.image_cols))
@@ -259,8 +265,13 @@ class DualRailNetworkPlot(object):
 
 
   def _draw_image(self, img_data, ax):
+    if self._image_plot_mode == 'threshold':
+      vmin, vmax = -1e-3,1e-3
+    else:
+      vmin, vmax = -1, 1
+
     ax.clear()
-    ax.matshow(img_data, vmin = -self._input_magnitude, vmax = self._input_magnitude, cmap = 'gray_r')
+    ax.matshow(img_data, vmin = vmin, vmax = vmax, cmap = 'gray_r')
     ax.set_xticks(np.arange(self.image_cols))
     ax.set_yticks(np.arange(self.image_rows))
 
@@ -325,6 +336,20 @@ def plot_dualrail_tsne(num_nodes, num_pixels, data, data_tsne, colors):
             nodes_left.remove(n)
       clusters.append(cur_cluster)
     return clusters
+
+  def data_to_matrix(data, rows, cols):
+    node_idxs = {n:i for i,n in enumerate(node_names)}
+
+    mat = np.zeros((num_nodes, num_nodes))
+    mat[np.triu_indices(num_nodes, 1)] = data
+    mat = mat + mat.T
+
+    mat_reorder = np.zeros((num_nodes, num_nodes))
+    for i,j in it.product(range(len(rows)), range(len(cols))):
+      mat_reorder[i,j] = mat[node_idxs[rows[i]], node_idxs[cols[j]]]
+
+    return mat_reorder
+      
            
   def show_point_details(idx):
     data_sel = data[idx, :]
@@ -333,25 +358,26 @@ def plot_dualrail_tsne(num_nodes, num_pixels, data, data_tsne, colors):
     scatter.set_edgecolors([(0,0,0,0)]*idx + ['k'] + [(0,0,0,0)]*(num_pts-idx-1))
 
     # plot on detail axes each parameter set
-    mat = np.zeros((num_nodes, num_nodes))
-    mat[np.triu_indices(num_nodes, 1)] = data_sel
-    mat = mat + mat.T
+    mat_rows = [f'{n+1}{pm}' for pm in '-+' for n in range(num_pixels)]
+    mat_cols = [f'{n+1}{pm}' for pm in '+-' for n in range(num_pixels)]
+    mat = data_to_matrix(data_sel, mat_rows, mat_cols)
     detail_ax.clear()
     detail_ax.matshow(mat, vmin=0, vmax=1, origin='upper', cmap='gray_r')
     detail_ax.set_xticks(np.arange(num_nodes))
     detail_ax.set_yticks(np.arange(num_nodes))
-    detail_ax.set_xticklabels(node_names)
-    detail_ax.set_yticklabels(node_names)
+    detail_ax.set_xticklabels(mat_cols)
+    detail_ax.set_yticklabels(mat_rows)
 
     # plot on network axes the network for the first point in event.ind (could hcange to closest point)
     node_clusters = identify_node_clusters(node_names, data_sel)
     colors = ['tab:blue','tab:orange','tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
     node_color_dict = {n: color for cluster, color in zip(node_clusters, colors) for n in cluster}
     node_color = [node_color_dict[n] for n in node_names]
-    edges = [(node_names[i1], node_names[i2], w) for i1,i2,w in zip(*np.triu_indices(num_nodes,1), data_sel)]
+    for i1,i2,w in zip(*np.triu_indices(num_nodes,1), data_sel):
+      network.add_edge(node_names[i1], node_names[i2], weight=np.sqrt(w))
+
     network_ax.clear()
 #    nx.draw_networkx(network, pos = node_pos, ax = network_ax, with_labels=True, node_color=node_color, node_size=400, width=data_sel*4)
-    network.add_weighted_edges_from(edges)
     spring_pos = nx.drawing.layout.spring_layout(network, pos=node_pos, fixed=['1+'])
     nx.draw_networkx(network, pos = spring_pos, ax = network_ax, with_labels=True, node_color=node_color, node_size=400, width=data_sel*4)
 #    nx.draw_networkx(network, ax = network_ax, with_labels=True, node_color='#CCC', node_size=400, width=data_sel*4)
