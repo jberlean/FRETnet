@@ -73,7 +73,7 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
 #    print(output_rates)
     return pred * output_rates
 
-def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv = None):
+def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, input_magnitude = 1, output_magnitude = 1, Ainv = None):
     """
     Computes the dual-rail network output given an input pattern and parameters of the single-rail system
     (k_ij and k_out). The intrinsic excitation rate constants for the single-rail system are derived
@@ -90,6 +90,13 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv 
             Should be a square and symmetric 2nx2n matrix, with diagonal entries equal to 0.
         output_rates_sr (np.array): The intrinsic emission rate constants of each node in the single-rail system (k_out).
             Should be a length-2n 1d nonnegative array
+        input_magnitude (float): [default=1] The magnitude of input fluorescence into each node. 
+            For each pixel, one of its corresponding fluorophores will have k_in=input_magnitude and the other k_in=0.
+        output_magnitude (float): [default=1] The magnitude of output fluorescence expected from an "on" node.
+            The output pixel value will be scaled so that if the range of (f_pos - f_neg) is 
+              [-output_magnitude, +output_magnitude]
+            then the range of pixel values will be
+              [-1, +1].
         Ainv (np.array): [optional] The precomputed inverse A matrix, which may be given as an optimization. 
             If not given, will be computed. Should be a square nxn matrix.
 
@@ -100,19 +107,15 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, Ainv 
             Should be a length-2n 1d array.
         
     """
-    # 0.76s/iter (101/1000 - 25/1000)
-
     num_nodes_dr = len(input_pattern)
     num_nodes_sr = 2*num_nodes_dr
-#****
-#    return np.zeros(num_nodes_dr), np.zeros(num_nodes_sr)
 
     # Determine equivalent single-rail input rates based on dual-rail input pattern
-    input_rates_sr = k_in_from_input_data(input_pattern)
+    input_rates_sr = input_magnitude * k_in_from_input_data(input_pattern)
 
     output_sr = calc_network_output_sr(rate_matrix_sr, input_rates_sr, output_rates_sr, Ainv = Ainv)
 
-    output_dr = output_sr[0::2] - output_sr[1::2]
+    output_dr = (output_sr[0::2] - output_sr[1::2]) / output_magnitude
 #    print(output_sr)
 #    print(output_dr)
 
@@ -162,7 +165,7 @@ def train_dr_hebbian(train_data):
 
     return K_fret, k_out
 
-def train_dr(train_data, loss, init = 'random', seed = None):
+def train_dr(train_data, loss, init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 1, seed = None):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -172,7 +175,7 @@ def train_dr(train_data, loss, init = 'random', seed = None):
         for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)):
             K_fret[i,j] = p[idx]
             K_fret[j,i] = p[idx]
-        k_out = 100*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
+        k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out
@@ -185,7 +188,9 @@ def train_dr(train_data, loss, init = 'random', seed = None):
                 calc_network_output_dr(
                     input_data,
                     K_fret,
-                    k_out
+                    k_out,
+                    input_magnitude = input_magnitude,
+                    output_magnitude = output_magnitude
                 )[0],
                 output_data_cor
             ) 
@@ -201,6 +206,9 @@ def train_dr(train_data, loss, init = 'random', seed = None):
 
     num_params = num_nodes_sr*(num_nodes_sr-1)//2 + num_nodes_sr
 
+    if output_magnitude is None:
+      output_magnitude = input_magnitude * k_out_value / (input_magnitude + k_out_value)
+
     if init == 'one':
         init_params = np.ones(num_params)
     elif init == 'zero':
@@ -215,7 +223,7 @@ def train_dr(train_data, loss, init = 'random', seed = None):
 
     return (*params_to_rates(res.x), 2*res.cost, res)
     
-def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
+def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -225,12 +233,12 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
         for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)):
             K_fret[i,j] = p[idx]
             K_fret[j,i] = p[idx]
-        k_out = 100*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
+        k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out
 
-    def loss_func_scipy(params):
+    def loss_func(params):
         K_fret, k_out = params_to_rates(params)
 
         resid = np.array([
@@ -238,7 +246,9 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
                 calc_network_output_dr(
                     input_data,
                     K_fret,
-                    k_out
+                    k_out,
+                    input_magnitude = input_magnitude,
+                    output_magnitude = output_magnitude
                 )[0],
                 output_data_cor
             ) 
@@ -254,6 +264,9 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
 
     num_params = num_nodes_sr*(num_nodes_sr-1)//2 #+ num_nodes_sr
 
+    if output_magnitude is None: 
+      output_magnitude = input_magnitude * k_out_value / (input_magnitude + k_out_value)
+
     if anneal_protocol is None:
       anneal_protocol = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
     accept_hist_len = 500
@@ -262,7 +275,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
 #    print(params_to_rates(init_params))
 
     params_cur = init_params
-    f_cur = np.sum(loss_func_scipy(params_cur)**2)
+    f_cur = np.sum(loss_func(params_cur)**2)
     noise = init_noise
 
     params_hist = []
@@ -273,7 +286,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
       if any(params_new > high_bound) or any(params_new < low_bound):
         f_new = np.inf # disallow moving outside the bounds
       else:
-        f_new = np.sum(loss_func_scipy(params_new)**2)
+        f_new = np.sum(loss_func(params_new)**2)
 
       df = max(f_new - f_cur, T*np.log(1e-100)) # avoid overflows
 #      accept_prob = np.exp(-df/T) * np.product(params_new/params_cur)  # use correction factor for uniform prior
@@ -303,17 +316,17 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_pr
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
 
-def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, pbar_file = None, history_output_interval = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
-        params = np.concatenate((K_fret[idxs], k_out))
+        params = K_fret[idxs]
         return params
     def params_to_rates(p):
         K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
         for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)):
             K_fret[i,j] = p[idx]
             K_fret[j,i] = p[idx]
-        k_out = 100*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
+        k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out
@@ -327,21 +340,14 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anne
                     input_data,
                     K_fret,
                     k_out,
+                    input_magnitude = input_magnitude,
+                    output_magnitude = output_magnitude,
                     Ainv = Ainv
                 )[0],
                 output_data_cor
             ) 
             for (input_data,output_data_cor),Ainv in zip(train_data, Ainvs)
         ])**2).sum()
-        # 65/1000 - 1/1000
-
-#        f = lambda x: loss.fn(calc_network_output_dr(x[0], K_fret, k_out)[0], x[1])
-#
-#        resid = (np.fromiter(map(f, train_data), dtype=float)**2).sum()
-#        # 91/1000 - 1/1000
-
-
-#        resid = np.zeros(len(train_data))
 
         return resid
 
@@ -352,6 +358,9 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anne
 
     num_params = num_nodes_sr*(num_nodes_sr-1)//2
 
+    if output_magnitude is None:
+      output_magnitude = input_magnitude*k_out_value/(input_magnitude + k_out_value)
+ 
     if anneal_protocol is None:
       anneal_protocol = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
 
@@ -361,7 +370,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anne
     init_K_fret, init_k_out = params_to_rates(init_params)
 
     params_cur = init_params
-    Ainvs_cur = [Ainv_from_rates(init_K_fret, k_in_from_input_data(input_data), init_k_out) for input_data,_ in train_data]
+    Ainvs_cur = [Ainv_from_rates(init_K_fret, input_magnitude * k_in_from_input_data(input_data), init_k_out) for input_data,_ in train_data]
     f_cur = loss_func(params_cur, Ainvs_cur)
 
     step_size = init_step_size*np.ones(num_params)
@@ -414,7 +423,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, anne
         Ainvs_new = [
             Ainv_from_rates(
                 K_fret, 
-                k_in_from_input_data(input_data), 
+                input_magnitude * k_in_from_input_data(input_data), 
                 k_out
             )
             for input_data,_ in train_data

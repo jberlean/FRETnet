@@ -50,9 +50,9 @@ duplication = user_args.get('train_data_duplication', 20)
 # Training parameters
 reps = user_args.get('reps', 1)
 
-train_kwargs_MC = dict(low_bound = 1e-10, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
-train_kwargs_GD = {}
-train_kwargs_MG = dict(low_bound = 1e-2, high_bound = 1e5, anneal_protocol = None, goal_accept_rate = 0.44, init_step_size = 2, warmup_iters=0, verbose = False)
+train_kwargs_MC = dict(low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
+train_kwargs_GD = dict(init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 100)
+train_kwargs_MG = dict(low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = None, goal_accept_rate = 0.44, init_step_size = 2, verbose = False)
 
 train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
