@@ -7,6 +7,7 @@ import itertools as it
 import networkx as nx
 import numpy as np
 import matplotlib
+from matplotlib import cm
 import matplotlib.pyplot as plt
 plt.ion()
 
@@ -61,6 +62,7 @@ class DualRailNetworkPlot(object):
 
     self._figure = None
     self._ax_img_in, self._ax_img_out = None, None
+    self._ax_img_in_cbar, self._ax_img_out_cbar = None, None
     self._ax_net_in, self._ax_net_out = None, None
     self._image_plot_mode = 'threshold'
 
@@ -96,7 +98,7 @@ class DualRailNetworkPlot(object):
 
     kfret_matrix = network.compute_kfret_matrix()
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
-      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kfret_matrix[i1,i2]/(100+kfret_matrix[i1,i2]), pring_weight=4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2]))
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kfret_matrix[i1,i2]/(100+kfret_matrix[i1,i2]), spring_weight=4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2]))
 
     node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
@@ -226,8 +228,8 @@ class DualRailNetworkPlot(object):
     mat_img_in, mat_img_out, vals_net_in, vals_net_out = self._collect_plot_data()
 
     # Plot input and output images
-    self._draw_image(mat_img_in, self._ax_img_in)
-    self._draw_image(mat_img_out, self._ax_img_out)
+    self._ax_img_in_cbar = self._draw_image(mat_img_in, self._ax_img_in, self._ax_img_in_cbar)
+    self._ax_img_out_cbar = self._draw_image(mat_img_out, self._ax_img_out, self._ax_img_out_cbar)
 
     # Plot input and ouptut networks
     self._draw_network(vals_net_in/self.input_magnitude, self._ax_net_in)
@@ -264,16 +266,23 @@ class DualRailNetworkPlot(object):
     return mat_img_in, mat_img_out, vals_net_in, vals_net_out
 
 
-  def _draw_image(self, img_data, ax):
+  def _image_plot_cmap(self):
     if self._image_plot_mode == 'threshold':
-      vmin, vmax = -1e-3,1e-3
+      cmap = matplotlib.colors.ListedColormap(['w','k'])
     else:
-      vmin, vmax = -1, 1
+      cmap = cm.gray_r
+    return cmap
+
+  def _draw_image(self, img_data, ax, ax_cbar = None):
+    if ax_cbar is not None:  ax_cbar.remove()
 
     ax.clear()
-    ax.matshow(img_data, vmin = vmin, vmax = vmax, cmap = 'gray_r')
+    mappable = ax.matshow(img_data, vmin = -1, vmax = 1, cmap = self._image_plot_cmap())
     ax.set_xticks(np.arange(self.image_cols))
     ax.set_yticks(np.arange(self.image_rows))
+    ax_cbar_new = self._figure.colorbar(mappable, ax=ax)
+
+    return ax_cbar_new
 
   def _draw_network(self, node_values, ax):
     node_colors = [[1-max(min(v,1),0)]*3 for v in node_values]
