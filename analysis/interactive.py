@@ -97,8 +97,9 @@ class DualRailNetworkPlot(object):
     network_nx.add_nodes_from(node_names)
 
     kfret_matrix = network.compute_kfret_matrix()
+    kout = [n.decay_rate + n.emit_rate for n in network.nodes]
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
-      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kfret_matrix[i1,i2]/(100+kfret_matrix[i1,i2]), spring_weight=4*kfret_matrix[i1,i2]/(1+kfret_matrix[i1,i2]))
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=4/(kout[i1]/kfret_matrix[i1,i2] + 1), spring_weight=4/(1 + .1*kout[i1]/kfret_matrix[i1,i2]))
 
     node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
