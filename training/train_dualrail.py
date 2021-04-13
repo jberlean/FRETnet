@@ -223,7 +223,7 @@ def train_dr(train_data, loss, init = 'random', input_magnitude = 1, output_magn
 
     return (*params_to_rates(res.x), 2*res.cost, res)
     
-def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
+def train_dr_MC(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -316,7 +316,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_mag
    
     return (*params_to_rates(params_cur), f_cur, params_hist)
 
-def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.44, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = K_fret[idxs]
@@ -409,7 +409,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
         accept_hist[i%accept_hist_len, p_idx] = accept
 
 #      print(accept_hist[i%accept_hist_len, :])
-      if i % accept_hist_len == accept_hist_len-1 and i < warmup_iters:
+      if i % accept_hist_len == accept_hist_len-1:
         step_size *= step_size_adjust ** (np.sign(np.mean(accept_hist, axis=0)-goal_accept_rate))
 
 #        print(step_size)
