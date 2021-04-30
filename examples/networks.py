@@ -1,6 +1,11 @@
-import sys, os
+import sys
+import pathlib
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+## Import FRETnet package
+pkg_path = str(pathlib.Path(__file__).absolute().parent.parent)
+if pkg_path not in sys.path:
+  sys.path.insert(0,pkg_path)
+
 import objects.utils as objects
 
 def linear(n=2, k_in = 1, k_out = 1, k_fret = 1):

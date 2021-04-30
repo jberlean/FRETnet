@@ -1,4 +1,4 @@
-import os, sys
+import sys, pathlib
 import itertools as it
 import pickle
 import math
@@ -9,9 +9,10 @@ import scipy.optimize
 import tqdm
 
 # INTRAPACKAGE IMPORTS
-package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if package_dir not in sys.path:
-  sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # add parent directory to python path
+pkg_path = str(pathlib.Path(__file__).absolute().parent.parent)
+if pkg_path not in sys.path:
+  sys.path.append(pkg_path)
+from objects import utils as objects
 
 from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates
 
@@ -21,7 +22,7 @@ from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_i
 # GRADIENT CALCULATION #
 ########################
 
-def adjust_Ainv(Ainv, dx, i, j):
+def adjust_Ainv_kfret(Ainv, dx, i, j):
   # As an optimization, if only a single rate has changed we may recompute
   # A^-1 quickly, using the Sherman-Morrison formula for rank-1 matrix perturbations:
   #   dAinv = -dx/(1 + dx*(Ainv[i,i] - 2*Ainv[i,j] + Ainv[j,j]) * ((A[:,i] - A[:,j]) @ (A[i,:] - A[j,:]))
@@ -29,7 +30,11 @@ def adjust_Ainv(Ainv, dx, i, j):
   dAinv = np.outer(coef*(Ainv[i,:] - Ainv[j,:]), Ainv[i,:] - Ainv[j,:])
   return Ainv + dAinv
 
-def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
+def adjust_Ainv_kdecay(Ainv, dx, i):
+  dAinv = -dx * np.outer(Ainv[i,:], Ainv[i,:]) / (1 + dx * Ainv[i,i])
+  return Ainv + dAinv
+
+def calc_network_output_sr(rate_matrix, input_rates, output_rates, decay_rates = 0, Ainv = None):
     """
     Computes the single-rail network output given all rate parameters (k_in, k_out, k_ij).
     The single-rail network output is the output fluorescence from each node, given by p_i * k^i_out.
@@ -40,6 +45,8 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
         input_rates (np.array): The intrinsic excitation rates of each node (k_in).
             Should be length-n 1d array, for network of n nodes.
         output_rates (np.array): The intrinsic emission rate constants of each node (k_out). 
+            Should be a length-n 1d array, for network of n nodes.
+        decay_rates (np.array): The intrinsic decay rate constants of each node (k_out). 
             Should be a length-n 1d array, for network of n nodes.
         Ainv (np.array): [optional] The precomputed inverse A matrix. If not given, will be computed.
             Should be a square nxn matrix.
@@ -53,7 +60,7 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
     if Ainv is None:
       num_nodes = len(input_rates)
       A = -rate_matrix
-      A[np.diag_indices(num_nodes)] = rate_matrix.sum(axis=1) + input_rates + output_rates
+      A[np.diag_indices(num_nodes)] = rate_matrix.sum(axis=1) + input_rates + output_rates + decay_rates
       pred = np.linalg.solve(A, input_rates)
     else:
       pred = Ainv @ input_rates
@@ -73,7 +80,7 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, Ainv = None):
 #    print(output_rates)
     return pred * output_rates
 
-def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, input_magnitude = 1, output_magnitude = 1, Ainv = None):
+def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, decay_rates_sr = 0, input_magnitude = 1, output_magnitude = 1, Ainv = None):
     """
     Computes the dual-rail network output given an input pattern and parameters of the single-rail system
     (k_ij and k_out). The intrinsic excitation rate constants for the single-rail system are derived
@@ -89,6 +96,8 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, input
         rate_matrix_sr (np.array): A matrix of the FRET rate constants between nodes in the single-rail system. 
             Should be a square and symmetric 2nx2n matrix, with diagonal entries equal to 0.
         output_rates_sr (np.array): The intrinsic emission rate constants of each node in the single-rail system (k_out).
+            Should be a length-2n 1d nonnegative array
+        decay_rates_sr (np.array): The intrinsic decay rate constants of each node in the single-rail system (k_decay).
             Should be a length-2n 1d nonnegative array
         input_magnitude (float): [default=1] The magnitude of input fluorescence into each node. 
             For each pixel, one of its corresponding fluorophores will have k_in=input_magnitude and the other k_in=0.
@@ -113,7 +122,13 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, input
     # Determine equivalent single-rail input rates based on dual-rail input pattern
     input_rates_sr = input_magnitude * k_in_from_input_data(input_pattern)
 
-    output_sr = calc_network_output_sr(rate_matrix_sr, input_rates_sr, output_rates_sr, Ainv = Ainv)
+    output_sr = calc_network_output_sr(
+        rate_matrix_sr, 
+        input_rates_sr, 
+        output_rates_sr, 
+        decay_rates = decay_rates_sr, 
+        Ainv = Ainv
+    )
 
     output_dr = (output_sr[0::2] - output_sr[1::2]) / output_magnitude
 #    print(output_sr)
@@ -221,9 +236,18 @@ def train_dr(train_data, loss, init = 'random', input_magnitude = 1, output_magn
 
 #    print(res)
 
-    return (*params_to_rates(res.x), 2*res.cost, res)
+    K_fret, k_out = params_to_rates(params_cur)
+    output = {
+      'K_fret': K_fret,
+      'k_out': k_out,
+      'k_decay': np.zeros(num_nodes_sr),
+      'cost': 2*res.cost,
+      'raw': res
+    }
+   
+    return output
     
-def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
+def train_dr_MC(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -313,26 +337,40 @@ def train_dr_MC(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_mag
 
   
   #    print(f'Monte Carlo optimization results: {f_cur}')
+    K_fret, k_out = params_to_rates(params_cur)
+    output = {
+      'K_fret': K_fret,
+      'k_out': k_out,
+      'k_decay': np.zeros(num_nodes_sr),
+      'cost': f_cur,
+      'raw': params_hist
+    }
    
-    return (*params_to_rates(params_cur), f_cur, params_hist)
+    return output
 
-def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, warmup_iters = 2500, goal_accept_rate = 0.44, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
-    def rates_to_params(K_fret, k_out):
+def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, goal_accept_rate = 0.44, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+    def rates_to_params(K_fret, k_out, k_decay):
+        params = np.empty(num_params)
+
         idxs = np.triu_indices(num_nodes_sr, 1)
-        params = K_fret[idxs]
+        params[:num_params_k_fret] = K_fret[idxs]
+
+        params[num_params_k_fret:] = k_decay
+
         return params
     def params_to_rates(p):
         K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
-        for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)):
+        for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)): # TODO: switch to using np.triu_indices()
             K_fret[i,j] = p[idx]
             K_fret[j,i] = p[idx]
+        k_decay = p[num_nodes_sr*(num_nodes_sr-1)//2:]
         k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
-        return K_fret, k_out
+        return K_fret, k_out, k_decay
 
     def loss_func(params, Ainvs):
-        K_fret, k_out = params_to_rates(params)
+        K_fret, k_out, k_decay = params_to_rates(params)
 
         resid = (np.array([
             loss.fn(
@@ -340,6 +378,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
                     input_data,
                     K_fret,
                     k_out,
+                    decay_rates_sr = k_decay,
                     input_magnitude = input_magnitude,
                     output_magnitude = output_magnitude,
                     Ainv = Ainv
@@ -356,25 +395,47 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
     num_nodes_dr = len(train_data[0][0])
     num_nodes_sr = 2*num_nodes_dr
 
-    num_params = num_nodes_sr*(num_nodes_sr-1)//2
-
     if output_magnitude is None:
       output_magnitude = input_magnitude*k_out_value/(input_magnitude + k_out_value)
- 
-    if anneal_protocol is None:
-      anneal_protocol = np.concatenate((.0025*np.ones(500), np.arange(.0025, 0, -1e-6)))
 
+    num_params_k_fret = num_nodes_sr*(num_nodes_sr-1)//2
+    num_params_k_decay = num_nodes_sr
+    num_params = num_params_k_fret + num_params_k_decay
+    train_k_fret = k_fret_bounds[0] == k_fret_bounds[1]
+    train_k_decay = k_decay_bounds[0] == k_decay_bounds[1]
+ 
     accept_hist_len = 50
 
-    init_params = np.exp(rng.uniform(np.log(low_bound), np.log(high_bound), num_params))
-    init_K_fret, init_k_out = params_to_rates(init_params)
+    init_K_fret = np.exp(rng.uniform(np.log(k_fret_bounds[0]), np.log(k_fret_bounds[1]), num_params_k_fret))
+    init_k_out = k_out_value * num_nodes_sr
+    init_k_decay = np.exp(rng.uniform(np.log(k_decay_bounds[0]), np.log(k_decay_bounds[1]), num_params_k_decay))
+    init_params = rates_to_params(init_K_fret, init_k_out, init_k_decay)
 
     params_cur = init_params
-    Ainvs_cur = [Ainv_from_rates(init_K_fret, input_magnitude * k_in_from_input_data(input_data), init_k_out) for input_data,_ in train_data]
+    Ainvs_cur = [
+        Ainv_from_rates(
+            init_K_fret, 
+            input_magnitude * k_in_from_input_data(input_data), 
+            init_k_out+init_k_decay
+        ) 
+        for input_data,_ in train_data
+    ]
     f_cur = loss_func(params_cur, Ainvs_cur)
 
     step_size = init_step_size*np.ones(num_params)
     step_size_adjust = 1.02
+
+    params_train_protocol = [ # list of info needed to train each parameter
+        (p_idx, lambda Ainv, dk_fret: adjust_Ainv_kfret(Ainv, dk_fret, node_in, node_out))
+        for p_idx, (node_in, node_out) 
+        in enumerate(zip(*np.triu_indices(num_nodes_sr, 1)))
+        if train_k_fret
+    ] + [
+        (node+num_params_k_fret, lambda Ainv, dk_decay: adjust_Ainv_kdecay(Ainv, dk_decay, node))
+        for node
+        in range(num_nodes_sr)
+        if train_k_decay
+    ]
 
     params_hist = []
     accept_hist = -1*np.ones((accept_hist_len, num_params), dtype=int)
@@ -384,7 +445,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
     for i, T in temps_iter:
       steps = rng.normal(0, step_size, num_params)
-      for p_idx, (node_in, node_out) in enumerate(zip(*np.triu_indices(num_nodes_sr, 1))):
+      for p_idx, adjust_Ainv_func in params_train_protocol:
         param_cur = params_cur[p_idx]
         param_new = param_cur * np.exp(steps[p_idx])
 
@@ -394,7 +455,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
         if param_new > high_bound or param_new < low_bound: # throw out any moves outside the bounding box
           f_new = np.inf
         else:
-          Ainvs_new = [adjust_Ainv(Ainv, param_new - param_cur, node_in, node_out) for Ainv in Ainvs_cur]
+          Ainvs_new = [adjust_Ainv_func(Ainv, param_new - param_cur) for Ainv in Ainvs_cur]
           f_new = loss_func(params_new, Ainvs_new)
 
         df = max(f_new - f_cur, 0)
@@ -409,7 +470,7 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
         accept_hist[i%accept_hist_len, p_idx] = accept
 
 #      print(accept_hist[i%accept_hist_len, :])
-      if i % accept_hist_len == accept_hist_len-1 and i < warmup_iters:
+      if i % accept_hist_len == accept_hist_len-1:
         step_size *= step_size_adjust ** (np.sign(np.mean(accept_hist, axis=0)-goal_accept_rate))
 
 #        print(step_size)
@@ -419,12 +480,12 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
 #        noise /= 1.002
 
       if i%500 == 0: # every 500 iterations, recompute the A^-1 matrices in case of accumulated numerical errors
-        K_fret, k_out = params_to_rates(params_cur)
+        K_fret, k_out, k_decay = params_to_rates(params_cur)
         Ainvs_new = [
             Ainv_from_rates(
                 K_fret, 
                 input_magnitude * k_in_from_input_data(input_data), 
-                k_out
+                k_out + k_decay
             )
             for input_data,_ in train_data
         ]
@@ -443,8 +504,17 @@ def train_dr_MCGibbs(train_data, loss, low_bound = 1e-10, high_bound = 1e5, inpu
 
   
   #    print(f'Monte Carlo optimization results: {f_cur}')
+
+    K_fret, k_out, k_decay = params_to_rates(params_cur)
+    output = {
+      'K_fret': K_fret,
+      'k_out': k_out,
+      'k_decay': k_decay,
+      'cost': f_cur,
+      'raw': params_hist
+    }
    
-    return (*params_to_rates(params_cur), f_cur, params_hist)
+    return output
 
 
 def train_dr_multiple_multiprocessing_aux(args):
@@ -460,7 +530,7 @@ def train_dr_multiple_multiprocessing(train_func, train_data, loss, processes, r
       args_lst = [(train_func, train_data, loss, seed, train_kwargs) for seed in seeds]
       results_it = pool.imap(train_dr_multiple_multiprocessing_aux, args_lst)
       for res in tqdm.tqdm(results_it, total=reps, file=pbar_file):
-        results.append(dict(zip(['K_fret', 'k_out', 'cost', 'raw'], res)))
+        results.append(res)
 
     return results, seeds
 
@@ -472,7 +542,7 @@ def train_dr_multiple_singleprocessing(train_func, train_data, loss, reps, pbar_
     results = []
     for train_seed in tqdm.tqdm(seeds, file=pbar_file):
       res = train_func(train_data, loss, seed=seed, **train_kwargs)
-      results.append(dict(zip(['K_fret', 'k_out', 'cost', 'raw'], res)))
+      results.append(res)
 
     return results, seeds
 
@@ -510,7 +580,7 @@ def compare_train_funcs(funcs_lst, args_lst, num_nodes = 4, num_patterns = 3, no
           kin for bit in stored_data[0] for kin in (max(bit, 0), -min(bit, 0))
       ])
       trained_networks = [
-          network_from_rates(trained_K_fret, trained_k_out, k_in) for trained_K_fret, trained_k_out, _, _ in training_results
+          network_from_rates(res['K_fret'], res['k_out'], k_in, k_decay=res['k_decay']) for res in training_results
       ]
 
       print('Iteration {}: {}'.format(i, '\t'.join(str(results[2]) for results in training_results)))

@@ -25,6 +25,10 @@ with open(inpath, 'rb') as infile:
   data = pickle.load(infile)
 
 ## Select network to test, and construct fretnet_objects.Network instance
+input_magnitude = data['train_args_MG'].get('input_magnitude', 1)
+k_out_value = data['train_args_MG'].get('k_out_value', 100)
+output_magnitude = input_magnitude * k_out_value / (input_magnitude + k_out_value)
+
 results = data['results_MG']
 best_idx = np.argmin([res['cost'] for res in results])
 best_kfret = results[best_idx]['K_fret']
@@ -42,7 +46,9 @@ pixel_to_node_map = {px: (network.nodes[2*i], network.nodes[2*i+1]) for i,px in 
 plot = test_dualrail_network(
   network = network,
   pixels = pixels,
-  pixel_to_node_map = pixel_to_node_map
+  pixel_to_node_map = pixel_to_node_map,
+  input_magnitude = input_magnitude,
+  output_magnitude = output_magnitude
 )
   
 plot.display()

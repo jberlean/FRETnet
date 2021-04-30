@@ -3,6 +3,7 @@ import pathlib
 import itertools as it
 
 import numpy as np
+import scipy.linalg
 
 # INTRAPACKAGE IMPORTS
 pkg_path = str(pathlib.Path(__file__).absolute().parent.parent)
@@ -110,32 +111,27 @@ def probability_by_network_state(network, eps = 10**-10):
           prev_state[input_node_idx] = 1
           A[idx, state_to_idx(prev_state)] += e.rate
 
-  # Analyze A matrix to determine dominant eigenvectors
+  # Analyze A matrix to determine null space, which represents the (stable) steady-state
+  # vector of network state probabilities.
   # In well-behaved systems, there should be a single eigenvalue of magnitude 0, 
-  # with all other eigenvalues having negative real part
+  # with all other eigenvalues having negative real part.
   # Pathological systems may exhibit the following:
-  #   - multiple 0 eigenvalues, which may result in a non-unique steady state
+  #   - multiple 0 eigenvalues, which may result in a non-unique steady state; any may be returned by this function
   #   - no 0 eigenvalues, which may result in all probabilities going to 0 over time (this should be impossible)
   #   - any number of positive eigenvalues, which result in probabilities exploding (also should be impossible)
-  evals, evecs = np.linalg.eig(A)
-  dominant_eval_idx = np.argmax([lam.real for lam in evals])
-  dominant_eval = evals[dominant_eval_idx]
-  dominant_evec = evecs[:,dominant_eval_idx]
-  if dominant_eval.real > eps:
-    print(f'WARNING: Positive eigenvalue encountered when analyzing network {network}. Analysis may be unreliable')
-  elif dominant_eval.real < -eps:
-    print(f'WARNING: No zero eigenvalues encountered when analyzing network {network}. Analysis may be unreliable')
+  # This function will print a warning except in the last case
+  nullspace = scipy.linalg.null_space(A)
+  num_0_evals = nullspace.shape[1]
+  if num_0_evals == 0:
+    print(f'WARNING: No zero eigenvalues encountered when analyzing network {network}. Analysis failed')
+  elif num_0_evals > 1:
+    print(f'WARNING: Null-space has dimension >1, leading to non-unique steady state behavior. An arbitrary steady state will be returned')
 
-  if np.linalg.norm(dominant_evec.imag) > eps:
-    print(f'WARNING: Dominant eigenvector has imaginary part: {dominant_evec}. Imaginary component will be dropped.')
-  if dominant_evec.real.min()*dominant_evec.real.max() < 0:
-    print(f'WARNING: Dominant eigenvector has negative real parts. Analysis may be unreliable')
- 
-  evec_norm = dominant_evec.real / np.sum(dominant_evec.real) # this is the vector of state probabilities
+  prob_ss = nullspace / nullspace.sum() # this is the vector of state probabilities
 
   output = {}
   for state in it.product([0,1], repeat=num_nodes):
-    output[state] = evec_norm[state_to_idx(state)]
+    output[state] = prob_ss[state_to_idx(state)]
 
   return output
 

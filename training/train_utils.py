@@ -98,9 +98,12 @@ def k_in_from_input_data(input_data): # 0.018s/it (98/1000 - 80/1000)
     k_in_sr[1::2] = -np.minimum(input_data, 0)
     return k_in_sr
 
-def network_from_rates(K_fret, k_out, k_in):
+def network_from_rates(K_fret, k_out, k_in, k_decay = None):
     num_nodes = len(k_out)
-    nodes = [object_utils.InputNode('node{}'.format(i), production_rate=k_in_i, emit_rate=k_out_i) for i,(k_out_i,k_in_i) in enumerate(zip(k_out, k_in))]
+
+    if k_decay is None:  k_decay = np.zeros(num_nodes)
+
+    nodes = [object_utils.InputNode('node{}'.format(i), production_rate=k_in_i, emit_rate=k_out_i, decay_rate=k_decay_i) for i,(k_out_i,k_in_i, k_decay_i) in enumerate(zip(k_out, k_in, k_decay))]
     for i,j in it.product(range(num_nodes), range(num_nodes)):
         if i==j:  continue
         nodes[j].add_input(nodes[j], K_fret[i,j])
