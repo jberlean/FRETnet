@@ -406,7 +406,9 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
  
     accept_hist_len = 50
 
-    init_K_fret = np.exp(rng.uniform(np.log(k_fret_bounds[0]), np.log(k_fret_bounds[1]), num_params_k_fret))
+    init_K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
+    init_K_fret[np.triu_indices(num_nodes_sr, 1)] = np.exp(rng.uniform(np.log(k_fret_bounds[0]), np.log(k_fret_bounds[1]), num_params_k_fret))
+    init_K_fret += init_K_fret.T
     init_k_out = k_out_value * num_nodes_sr
     init_k_decay = np.exp(rng.uniform(np.log(k_decay_bounds[0]), np.log(k_decay_bounds[1]), num_params_k_decay))
     init_params = rates_to_params(init_K_fret, init_k_out, init_k_decay)
