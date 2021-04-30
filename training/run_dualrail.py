@@ -61,8 +61,7 @@ train_kwargs_MG.update(user_args.get('train_kwargs_MG', {}))
 processes = user_args.get('processes', 1)
 
 # Output parameters
-#outputdir = user_args.get('outputdir', f'/scratch/jberlean/tmp/{seed}/train{train_str}_{reps}x_seed={seed}.p')
-outputdir = f'tmp/{seed}'
+outputdir = user_args.get('outputdir', f'tmp/{seed}/')
 pbarpath = os.path.join(outputdir, f'pbar{train_str}_seed={seed}')
 outpath = os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}.p')
 
