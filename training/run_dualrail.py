@@ -52,13 +52,14 @@ reps = user_args.get('reps', 1)
 
 train_kwargs_MC = dict(low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
 train_kwargs_GD = dict(init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 100)
-train_kwargs_MG = dict(k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = [1,.1,.01,.001,1e-3,1e-4,1e-5], goal_accept_rate = 0.44, init_step_size = 2, verbose = False)
+#train_kwargs_MG = dict(k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), goal_accept_rate = 0.44, init_step_size = 2, verbose = False)
+train_kwargs_MG = dict(k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), goal_accept_rate = 0.44, init_step_size = 2, verbose = False)
 
 train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
 train_kwargs_MG.update(user_args.get('train_kwargs_MG', {}))
 
-processes = user_args.get('processes', 1)
+processes = user_args.get('processes', None)
 
 # Output parameters
 outputdir = user_args.get('outputdir', f'tmp/{seed}/')

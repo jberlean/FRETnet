@@ -10,3 +10,6 @@ __pycache__
 
 # mac-specific files
 *.DS_Store
+
+# local run files
+runs/*

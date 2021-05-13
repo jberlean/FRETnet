@@ -363,7 +363,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)): # TODO: switch to using np.triu_indices()
             K_fret[i,j] = p[idx]
             K_fret[j,i] = p[idx]
-        k_decay = p[num_nodes_sr*(num_nodes_sr-1)//2:]
+        k_decay = p[num_params_k_fret:]
         k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
@@ -401,15 +401,15 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
     num_params_k_fret = num_nodes_sr*(num_nodes_sr-1)//2
     num_params_k_decay = num_nodes_sr
     num_params = num_params_k_fret + num_params_k_decay
-    train_k_fret = k_fret_bounds[0] == k_fret_bounds[1]
-    train_k_decay = k_decay_bounds[0] == k_decay_bounds[1]
+    train_k_fret = k_fret_bounds[0] != k_fret_bounds[1]
+    train_k_decay = k_decay_bounds[0] != k_decay_bounds[1]
  
     accept_hist_len = 50
 
     init_K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
     init_K_fret[np.triu_indices(num_nodes_sr, 1)] = np.exp(rng.uniform(np.log(k_fret_bounds[0]), np.log(k_fret_bounds[1]), num_params_k_fret))
     init_K_fret += init_K_fret.T
-    init_k_out = k_out_value * num_nodes_sr
+    init_k_out = k_out_value * np.ones(num_nodes_sr)
     init_k_decay = np.exp(rng.uniform(np.log(k_decay_bounds[0]), np.log(k_decay_bounds[1]), num_params_k_decay))
     init_params = rates_to_params(init_K_fret, init_k_out, init_k_decay)
 
@@ -428,12 +428,12 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
     step_size_adjust = 1.02
 
     params_train_protocol = [ # list of info needed to train each parameter
-        (p_idx, lambda Ainv, dk_fret: adjust_Ainv_kfret(Ainv, dk_fret, node_in, node_out))
+        (p_idx, k_fret_bounds[0], k_fret_bounds[1], adjust_Ainv_kfret, (node_in, node_out))
         for p_idx, (node_in, node_out) 
         in enumerate(zip(*np.triu_indices(num_nodes_sr, 1)))
         if train_k_fret
     ] + [
-        (node+num_params_k_fret, lambda Ainv, dk_decay: adjust_Ainv_kdecay(Ainv, dk_decay, node))
+        (node+num_params_k_fret, k_decay_bounds[0], k_decay_bounds[1], adjust_Ainv_kdecay, (node,))
         for node
         in range(num_nodes_sr)
         if train_k_decay
@@ -447,7 +447,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
     for i, T in temps_iter:
       steps = rng.normal(0, step_size, num_params)
-      for p_idx, adjust_Ainv_func in params_train_protocol:
+      for p_idx, low_bound, high_bound, adjust_Ainv_func, adjust_Ainv_args in params_train_protocol:
         param_cur = params_cur[p_idx]
         param_new = param_cur * np.exp(steps[p_idx])
 
@@ -457,7 +457,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         if param_new > high_bound or param_new < low_bound: # throw out any moves outside the bounding box
           f_new = np.inf
         else:
-          Ainvs_new = [adjust_Ainv_func(Ainv, param_new - param_cur) for Ainv in Ainvs_cur]
+          Ainvs_new = [adjust_Ainv_func(Ainv, param_new - param_cur, *adjust_Ainv_args) for Ainv in Ainvs_cur]
           f_new = loss_func(params_new, Ainvs_new)
 
         df = max(f_new - f_cur, 0)
@@ -471,15 +471,8 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
   
         accept_hist[i%accept_hist_len, p_idx] = accept
 
-#      print(accept_hist[i%accept_hist_len, :])
       if i % accept_hist_len == accept_hist_len-1:
         step_size *= step_size_adjust ** (np.sign(np.mean(accept_hist, axis=0)-goal_accept_rate))
-
-#        print(step_size)
-#      if np.mean(accept_hist) > goal_accept_rate:
-#        noise *= 1.002
-#      elif np.mean(accept_hist) < goal_accept_rate:
-#        noise /= 1.002
 
       if i%500 == 0: # every 500 iterations, recompute the A^-1 matrices in case of accumulated numerical errors
         K_fret, k_out, k_decay = params_to_rates(params_cur)
@@ -493,7 +486,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         ]
         max_err = max(np.sum((Ainv_n - Ainv_c)**2) for Ainv_n, Ainv_c in zip(Ainvs_new, Ainvs_cur))
         if max_err > 1e-5:
-          print(f'WARNING: Accumulated numerical error in computation of A^-1 led to discrepancies of {max_err}')
+          print(f'WARNING: Iteration {i}: Accumulated numerical error in computation of A^-1 led to discrepancies of {max_err}')
 
         Ainvs_cur = Ainvs_new
 
