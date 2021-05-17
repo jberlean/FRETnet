@@ -19,11 +19,12 @@ with open(datafile, 'rb') as instream:
 
 num_nodes = data['kfret'][0].shape[0]
 num_pixels = num_nodes//2
-params = np.array(data['params_transformed'])
+kfret = data['kfret']
+kout = data['kout']
 tsne_res = data['tsne'][perplexity]
 
 colors = data['colors']
 
-plot_dualrail_tsne(num_nodes, num_pixels, params, tsne_res, colors)
+plot_dualrail_tsne(num_nodes, num_pixels, kfret, kout, tsne_res, colors)
 
 

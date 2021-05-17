@@ -33,11 +33,12 @@ results = data['results_MG']
 best_idx = np.argmin([res['cost'] for res in results])
 best_kfret = results[best_idx]['K_fret']
 best_kout = results[best_idx]['k_out']
+best_kdecay = results[best_idx].get('k_decay', np.zeros_like(best_kout))
 
 num_nodes = len(best_kout)
 num_pixels = num_nodes//2
 node_names = [f'{i}{pm}' for i in range(1,num_pixels+1) for pm in ['+','-']]
-network = fretnet_objects.network_from_rates(best_kfret, best_kout, np.zeros_like(best_kout), node_names=node_names)
+network = fretnet_objects.network_from_rates(best_kfret, best_kout, np.zeros_like(best_kout), k_decay=best_kdecay, node_names=node_names)
 
 ## Test network using test_dualrail_network function
 pixels = list(map(str, range(1, num_pixels+1)))

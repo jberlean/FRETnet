@@ -265,9 +265,9 @@ def _node_outputs_hanlike(network):
 
   probs = _probability_by_node_hanlike(network)
   prob_vector = np.array([probs[n] for n in nodes])
-  k_out = np.array([n.emit_rate+n.decay_rate for n in nodes])
+  k_emit = np.array([n.emit_rate for n in nodes])
 
-  node_outputs = dict(zip(nodes, prob_vector*k_out))
+  node_outputs = dict(zip(nodes, prob_vector*k_emit))
   return node_outputs
 
 def _node_outputs_general(network):

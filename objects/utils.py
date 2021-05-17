@@ -256,15 +256,18 @@ class Network(object):
 # CONVENIENCE FUNCTIONS
 ######
 
-def network_from_rates(K_fret, k_out, k_in, node_names = None):
+def network_from_rates(K_fret, k_out, k_in, k_decay = None, node_names = None):
     num_nodes = len(k_out)
+
+    if k_decay is None:
+      k_decay = np.zeros_like(k_out)
 
     if node_names is None:
       node_names = [f'node{i}' for i in range(num_nodes)]
     elif len(node_names) < num_nodes:
       node_names.extend([f'node{i}' for i in range(len(node_names), num_nodes)])
 
-    nodes = [InputNode(name, production_rate=k_in_i, emit_rate=k_out_i) for name,k_out_i,k_in_i in zip(node_names, k_out, k_in)]
+    nodes = [InputNode(name, production_rate=k_in_i, emit_rate=k_out_i, decay_rate = k_decay_i) for name,k_out_i,k_in_i,k_decay_i in zip(node_names, k_out, k_in, k_decay)]
     for i,j in it.product(range(num_nodes), range(num_nodes)):
         if i==j:  continue
         nodes[j].add_input(nodes[i], K_fret[i,j])
