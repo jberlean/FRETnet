@@ -348,7 +348,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magn
    
     return output
 
-def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, goal_accept_rate = 0.44, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out, k_decay):
         params = np.empty(num_params)
 
@@ -472,7 +472,10 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         accept_hist[i%accept_hist_len, p_idx] = accept
 
       if i % accept_hist_len == accept_hist_len-1:
-        step_size *= step_size_adjust ** (np.sign(np.mean(accept_hist, axis=0)-goal_accept_rate))
+        accept_rate = np.mean(accept_hist, axis=0)
+        accept_change = -1*(accept_rate - accept_rate_min < 0) + 1*(accept_rate - accept_rate_max > 0)
+        step_size *= step_size_adjust ** accept_change
+        print(accept_rate, accept_change, step_size)
 
       if i%500 == 0: # every 500 iterations, recompute the A^-1 matrices in case of accumulated numerical errors
         K_fret, k_out, k_decay = params_to_rates(params_cur)
