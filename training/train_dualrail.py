@@ -30,14 +30,14 @@ def adjust_Ainv_kfret(Ainv, dx, i, j):
   dAinv = np.outer(coef*(Ainv[i,:] - Ainv[j,:]), Ainv[i,:] - Ainv[j,:])
   return Ainv + dAinv
 
-def adjust_Ainv_kdecay(Ainv, dx, i):
+def adjust_Ainv_koff(Ainv, dx, i):
   dAinv = -dx * np.outer(Ainv[i,:], Ainv[i,:]) / (1 + dx * Ainv[i,i])
   return Ainv + dAinv
 
 def calc_network_output_sr(rate_matrix, input_rates, output_rates, decay_rates = 0, Ainv = None):
     """
-    Computes the single-rail network output given all rate parameters (k_in, k_out, k_ij).
-    The single-rail network output is the output fluorescence from each node, given by p_i * k^i_out.
+    Computes the single-rail network output given all rate parameters (k_in, k_emit, k_decay, k_ij).
+    The single-rail network output is the output fluorescence from each node, given by p_i * k^i_emit.
 
     Args:
         rate_matrix (np.array): The weights (rate constants, arbitrary units) between nodes in the system.
@@ -46,7 +46,7 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, decay_rates =
             Should be length-n 1d array, for network of n nodes.
         output_rates (np.array): The intrinsic emission rate constants of each node (k_out). 
             Should be a length-n 1d array, for network of n nodes.
-        decay_rates (np.array): The intrinsic decay rate constants of each node (k_out). 
+        decay_rates (np.array): The intrinsic decay rate constants of each node (k_decay). 
             Should be a length-n 1d array, for network of n nodes.
         Ainv (np.array): [optional] The precomputed inverse A matrix. If not given, will be computed.
             Should be a square nxn matrix.
@@ -143,11 +143,11 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, decay
 # TRAINING #
 ############
     
-def generate_training_data(stored_data, noise=.1, duplication=10, rng = None):
+def generate_training_data(stored_data, noise=.1, duplication=10, mode = 'flip', rng = None):
     train_data = [
         (input_data, output_data)
             for output_data in stored_data 
-            for input_data in off_patterns(output_data, noise, duplication, rng = rng)
+            for input_data in off_patterns(output_data, noise, duplication, mode, rng = rng)
     ]
 
     return train_data
@@ -433,7 +433,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         in enumerate(zip(*np.triu_indices(num_nodes_sr, 1)))
         if train_k_fret
     ] + [
-        (node+num_params_k_fret, k_decay_bounds[0], k_decay_bounds[1], adjust_Ainv_kdecay, (node,))
+        (node+num_params_k_fret, k_decay_bounds[0], k_decay_bounds[1], adjust_Ainv_koff, (node,))
         for node
         in range(num_nodes_sr)
         if train_k_decay
@@ -475,7 +475,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         accept_rate = np.mean(accept_hist, axis=0)
         accept_change = -1*(accept_rate - accept_rate_min < 0) + 1*(accept_rate - accept_rate_max > 0)
         step_size *= step_size_adjust ** accept_change
-        print(accept_rate, accept_change, step_size)
+#        print(accept_rate, accept_change, step_size)
 
       if i%500 == 0: # every 500 iterations, recompute the A^-1 matrices in case of accumulated numerical errors
         K_fret, k_out, k_decay = params_to_rates(params_cur)

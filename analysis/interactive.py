@@ -97,9 +97,9 @@ class DualRailNetworkPlot(object):
     network_nx.add_nodes_from(node_names)
 
     kfret_matrix = network.compute_kfret_matrix()
-    kout = [n.decay_rate + n.emit_rate for n in network.nodes]
+    koff = [n.decay_rate + n.emit_rate for n in network.nodes]
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
-      ko = .5*(kout[i1]+kout[i2])
+      ko = .5*(koff[i1]+koff[i2])
       kf = kfret_matrix[i1,i2]
       network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kf/(ko+kf), spring_weight=4*kf/(kf+.1*ko))
 
@@ -301,7 +301,7 @@ class DualRailNetworkPlot(object):
 # t-SNE ANALYSIS VISUALIZATION
 ##################################
 
-def plot_dualrail_tsne(num_nodes, num_pixels, kfret, kout, data_tsne, colors):
+def plot_dualrail_tsne(num_nodes, num_pixels, kfret, koff, data_tsne, colors):
   num_pts = len(kfret)
   node_names = [f'{i+1}{pm}' for i in range(num_pixels) for pm in '+-']
 
@@ -362,7 +362,7 @@ def plot_dualrail_tsne(num_nodes, num_pixels, kfret, kout, data_tsne, colors):
   def show_point_details(idx):
 #    data_sel = data[idx, :]
     kfret_sel = kfret[idx]
-    kout_sel = kout[idx]
+    koff_sel = koff[idx]
     
     # highlight selected point
     scatter.set_edgecolors([(0,0,0,0)]*idx + ['k'] + [(0,0,0,0)]*(num_pts-idx-1))
@@ -370,7 +370,7 @@ def plot_dualrail_tsne(num_nodes, num_pixels, kfret, kout, data_tsne, colors):
     # plot on detail axes each parameter set
     mat_rows = [f'{n+1}{pm}' for pm in '-+' for n in range(num_pixels)]
     mat_cols = [f'{n+1}{pm}' for pm in '+-' for n in range(num_pixels)]
-    mat_raw = kfret_sel / (kfret_sel + np.broadcast_to(kout_sel.reshape(num_nodes, 1), (num_nodes, num_nodes)))
+    mat_raw = kfret_sel / (kfret_sel + np.broadcast_to(koff_sel.reshape(num_nodes, 1), (num_nodes, num_nodes)))
     mat = reorder_mat(mat_raw, mat_rows, mat_cols)
 #    mat = data_to_matrix(data_sel, mat_rows, mat_cols)
     detail_ax.clear()
@@ -381,7 +381,7 @@ def plot_dualrail_tsne(num_nodes, num_pixels, kfret, kout, data_tsne, colors):
     detail_ax.set_yticklabels(mat_rows)
 
     # plot on network axes the network for the first point in event.ind (could hcange to closest point)
-    edge_weights_mat = kfret_sel / (kfret_sel + .1*np.broadcast_to(kout_sel.reshape(num_nodes, 1), (num_nodes, num_nodes)))
+    edge_weights_mat = kfret_sel / (kfret_sel + .1*np.broadcast_to(koff_sel.reshape(num_nodes, 1), (num_nodes, num_nodes)))
     edge_weights_mat += edge_weights_mat.T
     edge_weights_lst = edge_weights_mat[np.triu_indices(num_nodes,1)]
     edge_weights = {(node_names[i1], node_names[i2]): edge_weights_mat[i1,i2] for i1,i2 in it.permutations(range(num_nodes),2)}

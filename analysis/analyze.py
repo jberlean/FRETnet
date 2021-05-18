@@ -64,9 +64,9 @@ def probability_by_network_state(network, eps = 10**-10):
   num_nodes = len(nodes)
   node_idxs = {n: i for i,n in enumerate(nodes)}
 
-  # compute k_in and k_out vectors for convenience
+  # compute k_in and k_off vectors for convenience
   k_in = np.array([n.production_rate if isinstance(n, objects.InputNode) else 0.0 for n in nodes])
-  k_out = np.array([n.emit_rate+n.decay_rate for n in nodes])
+  k_off = np.array([n.emit_rate+n.decay_rate for n in nodes])
 
   # compute matrix of coefficients for the linear system of equations
   # network state X has corresponding index in A equal to the binary number corresponding to X's bits 
@@ -74,19 +74,19 @@ def probability_by_network_state(network, eps = 10**-10):
   for state in it.product([0,1], repeat=num_nodes):
     idx = state_to_idx(state)
     for node_idx, node in enumerate(nodes):
-      # handle k_in, k_out
+      # handle k_in, k_off
       if not state[node_idx]:
         state_node_on = list(state)
         state_node_on[node_idx] = 1
 
         A[idx, idx] -= k_in[node_idx]
-        A[idx, state_to_idx(state_node_on)] += k_out[node_idx]
+        A[idx, state_to_idx(state_node_on)] += k_off[node_idx]
       else:
         state_node_off = list(state)
         state_node_off[node_idx] = 0
         
         A[idx, state_to_idx(state_node_off)] += k_in[node_idx]
-        A[idx, idx] -= k_out[node_idx]
+        A[idx, idx] -= k_off[node_idx]
 
       # handle fret interactions
       for e in node.out_edges:
@@ -138,7 +138,8 @@ def probability_by_network_state(network, eps = 10**-10):
   
 
 def node_outputs(network, hanlike=True):
-  """ Computes the flux out of the network from each node, which includes exciton loss due to emission and decay.
+  """ Computes the network output from each node, which is defined as the flux of emission from each node.
+      Energy flux out of the network due to non-radiative decay (k_decay) is not included.
 
       Arguments:
         network (objects.utils.Network): The Network object to be analyzed.
@@ -253,7 +254,8 @@ def _probability_by_node_general(network):
   return node_probs
 
 def _node_outputs_hanlike(network):
-  """ Computes the flux out of the network from each node, which includes exciton loss due to emission and decay.
+  """ Computes the network output from each node, defined as the rate of exciton loss due to radiative decay.
+      Exciton loss due to non-radiative decay does not contribute to network output.
 
       Arguments:
         network (objects.utils.Network): The Network object to be analyzed.
@@ -265,16 +267,16 @@ def _node_outputs_hanlike(network):
 
   probs = _probability_by_node_hanlike(network)
   prob_vector = np.array([probs[n] for n in nodes])
-  k_emit = np.array([n.emit_rate for n in nodes])
+  k_out = np.array([n.emit_rate for n in nodes])
 
-  node_outputs = dict(zip(nodes, prob_vector*k_emit))
+  node_outputs = dict(zip(nodes, prob_vector*k_out))
   return node_outputs
 
 def _node_outputs_general(network):
   nodes = network.nodes
   node_probs = _probability_by_node_general(network)
 
-  node_outputs = {node:node_probs[node]*(node.emit_rate+node.decay_rate) for node in nodes}
+  node_outputs = {node:node_probs[node]*(node.emit_rate) for node in nodes}
   return node_outputs
 
 

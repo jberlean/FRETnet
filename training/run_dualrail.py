@@ -46,6 +46,7 @@ num_patterns = user_args.get('num_patterns', 3)
 # Parameters for generating training data
 noise = user_args.get('train_data_noise', 0.1)
 duplication = user_args.get('train_data_duplication', 20)
+corruption_mode = user_args.get('corruption_mode', 'flip')
 
 # Training parameters
 reps = user_args.get('reps', 1)
@@ -88,7 +89,7 @@ for d in stored_data:
   print(list(d))
 
 # Generate training data
-train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, rng = rng)
+train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, orng = rng)
 
 # Perform training
 train_seed_base = rng.integers(0, 10**6)
