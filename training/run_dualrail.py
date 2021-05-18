@@ -46,7 +46,7 @@ num_patterns = user_args.get('num_patterns', 3)
 # Parameters for generating training data
 noise = user_args.get('train_data_noise', 0.1)
 duplication = user_args.get('train_data_duplication', 20)
-corruption_mode = user_args.get('corruption_mode', 'flip')
+corruption_mode = user_args.get('train_data_corruption_mode', 'flip')
 
 # Training parameters
 reps = user_args.get('reps', 1)
