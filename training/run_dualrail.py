@@ -89,7 +89,7 @@ for d in stored_data:
   print(list(d))
 
 # Generate training data
-train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, orng = rng)
+train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, rng = rng)
 
 # Perform training
 train_seed_base = rng.integers(0, 10**6)
