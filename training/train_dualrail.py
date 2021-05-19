@@ -348,7 +348,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magn
    
     return output
 
-def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out, k_decay):
         params = np.empty(num_params)
 
@@ -406,11 +406,14 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
  
     accept_hist_len = 50
 
-    init_K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
-    init_K_fret[np.triu_indices(num_nodes_sr, 1)] = np.exp(rng.uniform(np.log(k_fret_bounds[0]), np.log(k_fret_bounds[1]), num_params_k_fret))
-    init_K_fret += init_K_fret.T
-    init_k_out = k_out_value * np.ones(num_nodes_sr)
-    init_k_decay = np.exp(rng.uniform(np.log(k_decay_bounds[0]), np.log(k_decay_bounds[1]), num_params_k_decay))
+    if init_K_fret is None:
+      init_K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
+      init_K_fret[np.triu_indices(num_nodes_sr, 1)] = np.exp(rng.uniform(np.log(k_fret_bounds[0]), np.log(k_fret_bounds[1]), num_params_k_fret))
+      init_K_fret += init_K_fret.T
+    if init_k_out is None:
+      init_k_out = k_out_value * np.ones(num_nodes_sr)
+    if init_k_decay is None:
+      init_k_decay = np.exp(rng.uniform(np.log(k_decay_bounds[0]), np.log(k_decay_bounds[1]), num_params_k_decay))
     init_params = rates_to_params(init_K_fret, init_k_out, init_k_decay)
 
     params_cur = init_params

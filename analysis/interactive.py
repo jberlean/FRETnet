@@ -83,8 +83,13 @@ class DualRailNetworkPlot(object):
         x,y = event.xdata, event.ydata
         row,col = int(round(y)), int(round(x))
         idx = row*self.image_cols + col
-        new_state = -1 if self.pixel_input(self._pixels[idx])==1 else 1
+
+        if 'shift' in str(event.key):
+          new_state = 0
+        else:
+          new_state = -1 if self.pixel_input(self._pixels[idx])==1 else 1
         self.set_pixel_input(self._pixels[idx], new_state)
+
         self.update_plot()
 
     self._figure.canvas.mpl_connect('button_press_event', click_handler)
@@ -99,9 +104,9 @@ class DualRailNetworkPlot(object):
     kfret_matrix = network.compute_kfret_matrix()
     koff = [n.decay_rate + n.emit_rate for n in network.nodes]
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
-      ko = .5*(koff[i1]+koff[i2])
+      ko1, ko2 = koff[i1], koff[i2]
       kf = kfret_matrix[i1,i2]
-      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kf/(ko+kf), spring_weight=4*kf/(kf+.1*ko))
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=4*kf/(ko1+kf) + 4*kf/(ko2+kf), spring_weight=4*kf/(kf+.1*ko1) + 4*kf/(kf + .1*ko2))
 
     node_angles = [np.pi-(i*3+isneg) * 2*np.pi/(3*self.num_pixels) for i in range(self.num_pixels) for isneg in [0,1]]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
