@@ -3,6 +3,7 @@ import itertools as it
 
 import numpy as np
 import scipy.special
+import sklearn.manifold
 
 
 ## Intrapackage imports
@@ -158,3 +159,51 @@ class NLL(LossFunc):
             else:
                 raise ValueError()
         return out
+
+
+def rate_to_distance(k_fret, k_0 = 1, r_0 = 1):
+  return (k_0 / k_fret) ** (1/6.) * r_0
+
+def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1):
+  num_nodes = K_fret.shape[0]
+
+  if k_off is None:
+    k_off = np.ones(num_nodes)
+
+  dists = rate_to_distance(K_fret + np.eye(num_nodes), k_0, r_0)
+  dists[np.diag_indices(num_nodes)] = 0.
+  
+  # get a rough guess using MDS
+  mds_embedding = sklearn.manifold.MDS(n_components = 3, dissimilarity = 'precomputed').fit_transform(dists)
+  mds_dists = np.array([[np.linalg.norm(mds_embedding[i,:] - mds_embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
+
+  # perform additional optimization
+  params_ideal = np.array([K_fret[i,j] / (K_fret[i,j] + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
+  def func(embedding):
+    embedding = embedding.reshape((-1, 3))
+    embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)]) + np.eye(num_nodes)
+    embedding_rates = k_0 * (r_0 / embedding_dists)**6
+    params = np.array([embedding_rates[i,j] / (embedding_rates[i,j] + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
+    return np.sum((params - params_ideal)**2)
+  scipy_res = scipy.optimize.minimize(func, mds_embedding.flatten())
+
+  embedding = scipy_res.x.reshape((-1,3))
+  embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
+  embedding_rates = k_0 * (r_0 / (embedding_dists + np.eye(num_nodes)))**6
+  params = np.array([embedding_rates[i,j] / (embedding_rates[i,j] + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
+
+#  import matplotlib.pyplot as plt
+#  plt.ion()
+#  plt.figure()
+##  plt.scatter(dists.flatten(), embedding_dists.flatten(), color='k')
+#  plt.scatter(params_ideal, params, color='k')
+#  plt.plot([0, max(params_ideal)], [0, max(params_ideal)], 'k--')
+#  plt.axis('square')
+#
+#  from mpl_toolkits import mplot3d
+#  plt.figure()
+#  ax = plt.axes(projection='3d')
+#  colors = ['tab:blue','tab:orange','tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
+#  ax.scatter3D(embedding[:,0], embedding[:,1], embedding[:,2], color=colors[:num_nodes], alpha=1)
+#
+  return embedding

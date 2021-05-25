@@ -605,4 +605,3 @@ def compare_train_funcs(funcs_lst, args_lst, num_nodes = 4, num_patterns = 3, no
 
     return all_output
 
-

@@ -114,6 +114,7 @@ output = {
   'train_data': train_data,
   'train_data_noise': noise,
   'train_data_duplication': duplication,
+  'train_data_corruption_mode': corruption_mode,
 }
 if train_MC:
   output['train_args_MC'] = train_kwargs_MC
