@@ -25,28 +25,22 @@ with open(inpath, 'rb') as infile:
   data = pickle.load(infile)
 
 ## Select network to test, and construct fretnet_objects.Network instance
-input_magnitude = data['train_args_MG'].get('input_magnitude', 1)
-k_out_value = data['train_args_MG'].get('k_out_value', 100)
-output_magnitude = input_magnitude * k_out_value / (input_magnitude + k_out_value)
+input_magnitude = data['input_magnitude']
+output_magnitude = data['output_magnitude']
 
-results = data['results_MG']
-best_idx = np.argmin([res['cost'] for res in results])
-best_kfret = results[best_idx]['K_fret']
-best_kout = results[best_idx]['k_out']
-best_kdecay = results[best_idx].get('k_decay', np.zeros_like(best_kout))
+num_pixels = data['num_pixels']
+num_fluorophores = data['num_fluorophores']
+pixel_names = data['pixel_names']
+fluorophore_names = data['fluorophore_names']
+pixel_to_fluorophore_map = data['pixel_to_fluorophore_map']
 
-num_nodes = len(best_kout)
-num_pixels = num_nodes//2
-node_names = [f'{i}{pm}' for i in range(1,num_pixels+1) for pm in ['+','-']]
-network = fretnet_objects.network_from_rates(best_kfret, best_kout, np.zeros_like(best_kout), k_decay=best_kdecay, node_names=node_names)
+network = data['network']
+pixel_to_node_map = {px: (network.nodes[fluorophore_names.index(node_p)], network.nodes[fluorophore_names.index(node_n)]) for px, (node_p, node_n) in pixel_to_fluorophore_map.items()}
 
 ## Test network using test_dualrail_network function
-pixels = list(map(str, range(1, num_pixels+1)))
-pixel_to_node_map = {px: (network.nodes[2*i], network.nodes[2*i+1]) for i,px in enumerate(pixels)}
-
 plot = test_dualrail_network(
   network = network,
-  pixels = pixels,
+  pixels = pixel_names,
   pixel_to_node_map = pixel_to_node_map,
   input_magnitude = input_magnitude,
   output_magnitude = output_magnitude
