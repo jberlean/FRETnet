@@ -164,7 +164,7 @@ class NLL(LossFunc):
 def rate_to_distance(k_fret, k_0 = 1, r_0 = 1):
   return (k_0 / k_fret) ** (1/6.) * r_0
 
-def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1):
+def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1, max_k = 1e3, dims=3):
   num_nodes = K_fret.shape[0]
 
   if k_off is None:
@@ -174,23 +174,26 @@ def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1):
   dists[np.diag_indices(num_nodes)] = 0.
   
   # get a rough guess using MDS
-  mds_embedding = sklearn.manifold.MDS(n_components = 3, dissimilarity = 'precomputed').fit_transform(dists)
+  mds_embedding = sklearn.manifold.MDS(n_components = dims, dissimilarity = 'precomputed').fit_transform(dists)
   mds_dists = np.array([[np.linalg.norm(mds_embedding[i,:] - mds_embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
 
   # perform additional optimization
-  params_ideal = np.array([K_fret[i,j] / (K_fret[i,j] + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
+  params_ideal = np.array([K_fret[i,j] / (K_fret[i,:].sum() + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
   def func(embedding):
-    embedding = embedding.reshape((-1, 3))
-    embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)]) + np.eye(num_nodes)
-    embedding_rates = k_0 * (r_0 / embedding_dists)**6
-    params = np.array([embedding_rates[i,j] / (embedding_rates[i,j] + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
-    return np.sum((params - params_ideal)**2)
+    embedding = embedding.reshape((-1, dims))
+    embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
+    embedding_rates = k_0 * (r_0 / (embedding_dists + np.eye(num_nodes)))**6
+    embedding_rates[np.diag_indices(num_nodes)] = 0.
+    params = np.array([embedding_rates[i,j] / (embedding_rates[i,:].sum() + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
+    bounds_penalty = np.sum(1. / (1 + (max_k/embedding_rates[embedding_rates>max_k*.99])**1000)) # log-sigmoid
+    return np.sum((params - params_ideal)**2) + bounds_penalty
   scipy_res = scipy.optimize.minimize(func, mds_embedding.flatten())
 
-  embedding = scipy_res.x.reshape((-1,3))
+  embedding = scipy_res.x.reshape((-1,dims))
   embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
   embedding_rates = k_0 * (r_0 / (embedding_dists + np.eye(num_nodes)))**6
-  params = np.array([embedding_rates[i,j] / (embedding_rates[i,j] + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
+  embedding_rates[np.diag_indices(num_nodes)] = 0
+  params = np.array([embedding_rates[i,j] / (embedding_rates[i,:].sum() + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
 
 #  import matplotlib.pyplot as plt
 #  plt.ion()

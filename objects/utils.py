@@ -201,7 +201,7 @@ class Network(object):
   def nodes(self):
     return self._nodes[:]
 
-  def compute_kfret_matrix(self):
+  def get_K_fret(self):
     num_nodes = len(self._nodes)
     node_idxs = {n:i for i,n in enumerate(self._nodes)}
 
@@ -212,6 +212,17 @@ class Network(object):
         K[i,j] = e.rate
 
     return K
+
+  def get_k_out(self):
+    k_out = np.array([n.emit_rate for n in self._nodes])
+    return k_out
+  
+  def get_k_decay(self):
+    k_decay = np.array([n.decay_rate for n in self._nodes])
+    return k_decay
+
+  def compute_kfret_matrix(self):
+    return self.get_K_fret()
 
   def choose_reaction(self):
     node_propensities = np.array([n.propensity() for n in self._nodes])
