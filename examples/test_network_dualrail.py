@@ -34,7 +34,11 @@ pixel_names = data['pixel_names']
 fluorophore_names = data['fluorophore_names']
 pixel_to_fluorophore_map = data['pixel_to_fluorophore_map']
 
-network = data['network']
+K_fret = data['K_fret']
+k_out = data['k_out']
+k_decay = data.get('k_decay', np.zeros_like(k_out))
+
+network = fretnet_objects.network_from_rates(K_fret, k_out, np.zeros_like(k_out), k_decay = k_decay, node_names = fluorophore_names)
 pixel_to_node_map = {px: (network.nodes[fluorophore_names.index(node_p)], network.nodes[fluorophore_names.index(node_n)]) for px, (node_p, node_n) in pixel_to_fluorophore_map.items()}
 
 ## Test network using test_dualrail_network function
