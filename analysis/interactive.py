@@ -64,7 +64,7 @@ class DualRailNetworkPlot(object):
     self._ax_img_in, self._ax_img_out = None, None
     self._ax_img_in_cbar, self._ax_img_out_cbar = None, None
     self._ax_net_in, self._ax_net_out = None, None
-    self._image_plot_mode = 'threshold'
+    self._image_plot_mode = 'continuous'
 
     self._network_nx, self._network_nx_node_pos = self._init_network_nx(self._network)
     self._network_nx_node_pos = self._calc_network_node_pos_spring()
@@ -74,7 +74,7 @@ class DualRailNetworkPlot(object):
     self._network_output = None
     self._image_input = np.zeros(len(self._pixels))
     self._image_output = None
-    for px in self._pixels:  self.set_pixel_input(px, -1)
+    for px in self._pixels:  self.set_pixel_input(px, 0)
 
   def _setup_event_handlers(self):
     def click_handler(event):
@@ -83,6 +83,8 @@ class DualRailNetworkPlot(object):
         x,y = event.xdata, event.ydata
         row,col = int(round(y)), int(round(x))
         idx = row*self.image_cols + col
+
+        if idx >= len(self._pixels):  return
 
         if 'shift' in str(event.key):
           new_state = 0
@@ -262,11 +264,13 @@ class DualRailNetworkPlot(object):
     self.update_plot()
 
   def _collect_plot_data(self):
+    nr,nc = self.image_rows, self.image_cols
+
     vals_img_in = list(map(self.pixel_input, self._pixels))
-    mat_img_in = np.array(vals_img_in).reshape((self.image_rows, self.image_cols))
+    mat_img_in = np.concatenate((vals_img_in, np.nan*np.ones(nr*nc - len(vals_img_in)))).reshape((nr,nc))
 
     vals_img_out = list(map(self.pixel_output, self._pixels))
-    mat_img_out = np.array(vals_img_out).reshape((self.image_rows, self.image_cols))
+    mat_img_out = np.concatenate((vals_img_out, np.nan*np.ones(nr*nc - len(vals_img_in)))).reshape((nr,nc))
 
     vals_net_in = np.array(list(map(self.node_input, self._nodes)))
     vals_net_out = np.array(list(map(self.node_output, self._nodes)))
