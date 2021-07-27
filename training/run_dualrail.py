@@ -94,7 +94,10 @@ if train_data_user is None:
   train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, rng = rng)
 else:
   train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, rng = rng) # to make sure RNG is in the same state regardless of whether training data is user-specified
-  train_data = train_data_user
+  train_data = [
+      (np.array(input_data), np.array(output_data))
+      for input_data, output_data in train_data_user
+  ]
 
 print('Training data:')
 for d_in, d_out in train_data:
