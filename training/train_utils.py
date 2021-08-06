@@ -211,12 +211,18 @@ def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1, max_k = 1e3, dims
 #
   return embedding
 
-def rates_to_positions_full(K_fret, k_in = None, k_out = None, k_decay = None, k_0 = 1, r_0 = None, max_k = 1e3, max_dist=1e3, dims=3, node_names = None):
+def random_point_on_sphere(radius, center, dims=3):
+  pts_gauss = np.random.normal(0, 1, dims)
+  pts_norm = pts_gauss / np.linalg.norm(pts_gauss) * radius
+  return pts_norm + center
+
+def rates_to_positions_full(K_fret, k_in = None, k_out = None, k_decay = None, k_0 = 1, R_0 = None, max_k = 1e3, max_dist=1e3, dims=3, node_names = None):
   num_nodes = K_fret.shape[0]
   num_fluors = 4*num_nodes
 
   if node_names is None:
     node_names = [f'{v}{pm}' for v in range(num_nodes//2) for pm in '+-']
+  fluor_names = [f'{n}{suffix}' for suffix in ['_IN','','_OUT','_QUENCH'] for n in node_names]
 
   if k_in is None: # rate constant for transfer from input fluor to compute fluor
     k_in = np.ones(num_nodes)
@@ -226,58 +232,72 @@ def rates_to_positions_full(K_fret, k_in = None, k_out = None, k_decay = None, k
     k_decay = np.ones(num_nodes)
   k_off = k_0 + k_out + k_decay # rate constant for transition from high to low
 
-  if r_0 is None: # matrix of Forster radii between input, compute, and output fluors and quenchers
-    r_0 = np.ones((4,4))
+  if R_0 is None: # matrix of Forster radii between input, compute, and output fluors and quenchers
+    R_0 = np.ones((4,4))
 
   f_in_start, f_in_end = 0, num_nodes
   f_comp_start, f_comp_end = num_nodes, 2*num_nodes
   f_out_start, f_out_end = 2*num_nodes, 3*num_nodes
   quench_start, quench_end = 3*num_nodes, 4*num_nodes
+  idx_lst = [(f_in_start, f_in_end), (f_comp_start, f_comp_end), (f_out_start, f_out_end), (quench_start, quench_end)]
 
   K = np.zeros((num_fluors, num_fluors))
   K[f_in_start:f_in_end, f_comp_start:f_comp_end] = np.diag(k_in)
   K[f_comp_start:f_comp_end, f_comp_start:f_comp_end] = K_fret
   K[f_comp_start:f_comp_end, f_out_start:f_out_end] = np.diag(k_out)
-  K[f_comp_start:f_comp_end, quench_start, quench_end] = np.diag(k_decay)
+  K[f_comp_start:f_comp_end, quench_start:quench_end] = np.diag(k_decay)
 
-  R_0 = np.repeat(np.repeat(r_0, num_nodes, axis=0), num_nodes, axis=1)
+  R_0_expanded = np.repeat(np.repeat(R_0, num_nodes, axis=0), num_nodes, axis=1)
 
   K_0 = np.ones((num_fluors, num_fluors))
   K_0[f_comp_start:f_comp_end, :] = k_0
 
+  weights = np.array([[0,1,0,0], [0,1,1,1], [0,0,0,0], [0,0,0,0]])
+
   dists = np.zeros((num_fluors, num_fluors))
-  for i,j in it.product(range(num_fluors), repeat=2):
-    if i == j:
-      dists[i,j] = 0
-      continue
-    k, k_0, r_0 = K[i,j], K_0[i,j], R_0[i,j]
+  for i,j in it.combinations(range(num_fluors), r=2):
+    k, k_0, r_0 = K[i,j], K_0[i,j], R_0_expanded[i,j]
     if r_0 == 0 or k == 0:
-      dists[i,j] = max_dist
+      dists[i,j] = 0
     else:  
       dists[i,j] = rate_to_distance(k, k_0, r_0)
+  dists += dists.T
   
-  # get a rough guess using MDS
-  mds_embedding = sklearn.manifold.MDS(n_components = dims, dissimilarity = 'precomputed').fit_transform(dists)
-  mds_dists = np.array([[np.linalg.norm(mds_embedding[i,:] - mds_embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
+  # get a rough guess using the basic optimizer for compute fluors and randomly placing other fluors
+  init_embedding_comp = rates_to_positions(K_fret, k_off = k_off, k_0 = k_0, r_0 = R_0[1,1], max_k = max_k, dims=dims)
+  init_embedding = np.zeros((num_fluors, dims))
+  init_embedding[f_in_start:f_in_end, :] = [random_point_on_sphere(rate_to_distance(k_in[i], k_0, R_0[0,1]), init_embedding_comp[i,:], dims=dims) for i in range(num_nodes)]
+  init_embedding[f_comp_start:f_comp_end, :] = init_embedding_comp
+  init_embedding[f_out_start:f_out_end, :] = [random_point_on_sphere(rate_to_distance(k_out[i], k_0, R_0[1,2]), init_embedding_comp[i,:], dims=dims) for i in range(num_nodes)]
+  init_embedding[quench_start:quench_end, :] = [random_point_on_sphere(rate_to_distance(k_decay[i], k_0, R_0[1,3]), init_embedding_comp[i,:], dims=dims) for i in range(num_nodes)]
+  init_dists = np.array([[np.linalg.norm(init_embedding[i,:] - init_embedding[j,:]) for j in range(num_fluors)] for i in range(num_fluors)])
 
   # perform additional optimization
 #  params_ideal = np.array([K_fret[i,j] / (K_fret[i,:].sum() + k_off[i]) for i,j in it.permutations(range(num_nodes),2)])
-  params_ideal = np.reshape([K[i,:] / (k_0+K[i,:].sum()) for i in range(num_fluors)], (-1,))
+  params_ideal = K / (k_0 + np.tile(K.sum(axis=1), (num_fluors,1)).T)
   def func(embedding):
     embedding = embedding.reshape((-1, dims))
     embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_fluors)] for i in range(num_fluors)])
-    embedding_K = K_0 * (R_0 / (embedding_dists + np.eye(num_fluors)))**6
+    embedding_K = K_0 * (R_0_expanded / (embedding_dists + np.eye(num_fluors)))**6
     embedding_K[np.diag_indices(num_fluors)] = 0.
-    params = np.reshape([embedding_K[i,:] / (k_0+embedding_K[i,:].sum()) for i in range(num_fluors)], (-1,))
+    resids = embedding_K / (k_0 + np.tile(embedding_K.sum(axis=1), (num_fluors,1)).T) - params_ideal
+    scores = np.array([[(resids[i1:i2,j1:j2]**2).sum() for j1,j2 in idx_lst] for i1,i2 in idx_lst])
     bounds_penalty = np.sum(1. / (1 + (max_k/embedding_K[embedding_K>max_k*.99])**1000)) # log-sigmoid
-    return np.sum((params - params_ideal)**2) + bounds_penalty
-  scipy_res = scipy.optimize.minimize(func, mds_embedding.flatten())
+    return (scores * weights).sum() + bounds_penalty
+  scipy_res = scipy.optimize.minimize(func, init_embedding.flatten())
 
   embedding = scipy_res.x.reshape((-1,dims))
-  embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_nodes)] for i in range(num_nodes)])
-  embedding_K = K_0 * (R_0 / (embedding_dists + np.eye(num_fluors)))**6
+  #embedding = init_embedding
+  embedding_dists = np.array([[np.linalg.norm(embedding[i,:] - embedding[j,:]) for j in range(num_fluors)] for i in range(num_fluors)])
+  embedding_K = K_0 * (R_0_expanded / (embedding_dists + np.eye(num_fluors)))**6
   embedding_K[np.diag_indices(num_fluors)] = 0
-  params = np.reshape([embedding_K[i,:] / (k_0+embedding_K[i,:].sum()) for i in range(num_fluors)], (-1,))
+  embedding_K_fret = embedding_K[f_comp_start:f_comp_end, f_comp_start:f_comp_end]
+  embedding_k_in = np.diag(embedding_K[f_in_start:f_in_end, f_comp_start:f_comp_end])
+  embedding_k_out = np.diag(embedding_K[f_comp_start:f_comp_end, f_out_start:f_out_end])
+  embedding_k_decay = np.diag(embedding_K[f_comp_start:f_comp_end, quench_start:quench_end])
+  params = embedding_K / (k_0 + np.tile(embedding_K.sum(axis=1), (num_fluors,1)).T)
+
+  print(embedding_dists)
 
 #  import matplotlib.pyplot as plt
 #  plt.ion()
@@ -294,5 +314,16 @@ def rates_to_positions_full(K_fret, k_in = None, k_out = None, k_decay = None, k
 #  ax.scatter3D(embedding[:,0], embedding[:,1], embedding[:,2], color=colors[:num_nodes], alpha=1)
 #
 
-  embedding_dict = dict(zip(node_names, [embedding[i,:] for i in range(num_fluors)]))
-  return embedding_dict
+  embedding_dict = dict(zip(fluor_names, [embedding[i,:] for i in range(num_fluors)]))
+  output = {
+    'positions': embedding_dict,
+    'K': embedding_K,
+    'k_in': embedding_k_in,
+    'k_out': embedding_k_out,
+    'K_fret': embedding_K_fret,
+    'k_decay': embedding_k_decay,
+    'fluorophore_names': fluor_names,
+    'node_names': node_names,
+  }
+    
+  return output
