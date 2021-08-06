@@ -48,8 +48,9 @@ def calc_network_output_sr(rate_matrix, input_rates, output_rates, decay_rates =
             Should be a length-n 1d array, for network of n nodes.
         decay_rates (np.array): The intrinsic decay rate constants of each node (k_decay). 
             Should be a length-n 1d array, for network of n nodes.
-        Ainv (np.array): [optional] The precomputed inverse A matrix. If not given, will be computed.
-            Should be a square nxn matrix.
+        Ainv (np.array): [optional] The precomputed inverse A matrix. If not given, linear system of eqns will be
+            solved without explicitly computing the inverse A matrix.
+            If given, should be a square nxn matrix.
     
     Returns:
         pred (np.array): The predicted values of each node's output.
@@ -107,7 +108,8 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, decay
             then the range of pixel values will be
               [-1, +1].
         Ainv (np.array): [optional] The precomputed inverse A matrix, which may be given as an optimization. 
-            If not given, will be computed. Should be a square nxn matrix.
+            If not given, sytem of equations will be solved without explicitly computing this. 
+            If given, should be a square nxn matrix.
 
     Returns:
         output_dr (np.array): The dual-rail outputs, defined as the difference between the output fluorescence from
@@ -495,6 +497,129 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
           print(f'WARNING: Iteration {i}: Accumulated numerical error in computation of A^-1 led to discrepancies of {max_err}')
 
         Ainvs_cur = Ainvs_new
+
+      if verbose and i%500 == 0:
+        print(i, T, f_cur, params_cur)
+        print(i, np.mean(accept_hist, axis=0), step_size)
+
+      if history_output_interval is not None and i%history_output_interval == 0:
+        params_hist.append((T, f_cur, params_cur))
+
+  
+  #    print(f'Monte Carlo optimization results: {f_cur}')
+
+    K_fret, k_out, k_decay = params_to_rates(params_cur)
+    output = {
+      'K_fret': K_fret,
+      'k_out': k_out,
+      'k_decay': k_decay,
+      'cost': f_cur,
+      'raw': params_hist
+    }
+   
+    return output
+
+def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_cc = 1, position_bounds = (-1e3, 1e3), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+    def params_to_rates(p):
+        positions = p.reshape((num_nodes_sr, 3))
+        K_fret = np.array([
+            [
+                train_utils.rate_from_positions(positions[n1,:], positions[n2,:], k_0, r_0_cc) if n1!=n2 else 0
+                for n2 in range(num_nodes_sr)
+            ] 
+            for n1 in range(num_nodes_sr)
+        ])
+        k_decay = np.zeros(num_nodes_sr)
+        k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
+#        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
+#        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
+        return K_fret, k_out, k_decay
+
+    def loss_func(params):
+        K_fret, k_out, k_decay = params_to_rates(params)
+
+        resid = (np.array([
+            loss.fn(
+                calc_network_output_dr(
+                    input_data,
+                    K_fret,
+                    k_out,
+                    decay_rates_sr = k_decay,
+                    input_magnitude = input_magnitude,
+                    output_magnitude = output_magnitude,
+                )[0],
+                output_data_cor
+            ) 
+            for input_data,output_data_cor in train_data
+        ])**2).sum()
+
+        return resid
+
+    rng = np.random.default_rng(seed)
+
+    num_nodes_dr = len(train_data[0][0])
+    num_nodes_sr = 2*num_nodes_dr
+
+    if output_magnitude is None:
+      output_magnitude = input_magnitude*k_out_value/(input_magnitude + k_out_value)
+
+    num_params_positions = num_nodes_sr*3
+    num_params = num_params_positions
+ 
+    accept_hist_len = 50
+
+    if init_positions is None:
+      init_positions = rng.uniform(position_bounds[0], position_bounds[1], (num_nodes_sr, 3))
+    init_params = np.flatten(init_positions)
+
+    params_cur = init_params
+    f_cur = loss_func(params_cur)
+
+    step_size = init_step_size*np.ones(num_params)
+    step_size_adjust = 1.02
+
+    params_train_protocol = [ # list of info needed to train each parameter
+        (p_idx, node, position_bounds[0], position_bounds[1])
+        for p_idx, (node, _) 
+        in enumerate(it.product(range(num_nodes_sr), [0,1,2]))
+        if train_positions
+    ]
+
+    params_hist = []
+    accept_hist = -1*np.ones((accept_hist_len, num_params), dtype=int)
+    if pbar_file is None:
+      temps_iter = enumerate(anneal_protocol)
+    else:
+      temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
+    for i, T in temps_iter:
+      steps = rng.normal(0, step_size, num_params)
+      for p_idx, node, low_bound, high_bound in params_train_protocol:
+        param_cur = params_cur[p_idx]
+        param_new = param_cur + steps[p_idx]
+
+        params_new = params_cur.copy()
+        params_new[p_idx] = param_new
+  
+        if param_new > high_bound or param_new < low_bound: # throw out any moves outside the bounding box
+          f_new = np.inf
+        else:
+          f_new = loss_func(params_new)
+
+        df = max(f_new - f_cur, 0)
+        accept_prob = np.exp(-df/T) 
+        accept = False
+        if rng.uniform(0,1) < accept_prob:
+          params_cur = params_new
+          f_cur = f_new
+          accept = True
+  
+        accept_hist[i%accept_hist_len, p_idx] = accept
+
+      if i % accept_hist_len == accept_hist_len-1:
+        accept_rate = np.mean(accept_hist, axis=0)
+        accept_change = -1*(accept_rate - accept_rate_min < 0) + 1*(accept_rate - accept_rate_max > 0)
+        step_size *= step_size_adjust ** accept_change
+#        print(accept_rate, accept_change, step_size)
 
       if verbose and i%500 == 0:
         print(i, T, f_cur, params_cur)

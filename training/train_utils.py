@@ -164,6 +164,9 @@ class NLL(LossFunc):
 def rate_to_distance(k_fret, k_0 = 1, r_0 = 1):
   return (k_0 / k_fret) ** (1/6.) * r_0
 
+def rate_from_positions(pos1, pos2, k_0, r_0):
+  return k_0 * (r_0 / np.linalg.norm(pos1, pos2))**6
+
 def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1, max_k = 1e3, dims=3):
   num_nodes = K_fret.shape[0]
 
