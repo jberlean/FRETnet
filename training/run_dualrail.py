@@ -20,7 +20,8 @@ train_mode = sys.argv[1] # a bitstring ABC; A = MC, B = GD, C = MC-Gibbs
 train_MC = train_mode[0]=='1'
 train_GD = train_mode[1]=='1'
 train_MG = train_mode[2]=='1'
-train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train_MG else ""}' # for file paths
+train_MGp = train_mode[3:4] == '1'
+train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train_MG else ""}{"MGp" if train_MGp else ""}' # for file paths
 
 if len(sys.argv) >= 3: 
   user_args_path = sys.argv[2]
@@ -55,10 +56,12 @@ reps = user_args.get('reps', 1)
 train_kwargs_MC = dict(low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
 train_kwargs_GD = dict(init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 100)
 train_kwargs_MG = dict(k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 2, verbose = False)
+train_kwargs_MGp = dict(k_0 = 1, r_0_cc = 7, position_bounds = (-1e3, 1e3), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 2, verbose = True)
 
 train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
 train_kwargs_MG.update(user_args.get('train_kwargs_MG', {}))
+train_kwargs_MGp.update(user_args.get('train_kwargs_MGp', {}))
 
 processes = user_args.get('processes', None)
 
@@ -114,6 +117,9 @@ if train_GD:
   results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
 if train_MG:
   results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
+if train_MGp:
+  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
+  
   
 
 pbar_file.close()
@@ -141,6 +147,10 @@ if train_MG:
   output['train_args_MG'] = train_kwargs_MG
   output['train_seeds_MG'] = train_seeds_MG
   output['results_MG'] = results_MG
+if train_MGp:
+  output['train_args_MGp'] = train_kwargs_MGp
+  output['train_seeds_MGp'] = train_seeds_MGp
+  output['results_MGp'] = results_MGp
  
 with open(outpath,'wb') as outfile:
   pickle.dump(output, outfile)
