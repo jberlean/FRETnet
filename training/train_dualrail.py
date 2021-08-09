@@ -14,7 +14,7 @@ if pkg_path not in sys.path:
   sys.path.append(pkg_path)
 from objects import utils as objects
 
-from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates
+from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates, rate_from_positions, random_point_on_sphere
 
 # TODO: use functions in train_singlerail.py rather than reimplementing them here
 
@@ -519,12 +519,11 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
    
     return output
 
-def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_cc = 1, position_bounds = (-1e3, 1e3), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
-    def params_to_rates(p):
-        positions = p.reshape((num_nodes_sr, 3))
+def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_cc = 1, position_bounds = (-1e1, 1e1), dims=3, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+    def rates_from_positions(positions):
         K_fret = np.array([
             [
-                train_utils.rate_from_positions(positions[n1,:], positions[n2,:], k_0, r_0_cc) if n1!=n2 else 0
+                rate_from_positions(positions[n1,:], positions[n2,:], k_0, r_0_cc) if n1!=n2 else 0
                 for n2 in range(num_nodes_sr)
             ] 
             for n1 in range(num_nodes_sr)
@@ -535,10 +534,15 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out, k_decay
 
-    def loss_func(params):
-        K_fret, k_out, k_decay = params_to_rates(params)
+    def loss_func(positions):
+        K_fret, k_out, k_decay = rates_from_positions(positions)
+#        print(params)
+#        print(K_fret)
+#        print(k_out)
+#        print(k_decay)
+#        sys.exit(0)
 
-        resid = (np.array([
+        resid = np.array([
             loss.fn(
                 calc_network_output_dr(
                     input_data,
@@ -549,9 +553,9 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
                     output_magnitude = output_magnitude,
                 )[0],
                 output_data_cor
-            ) 
-            for input_data,output_data_cor in train_data
-        ])**2).sum()
+            )**2 * multiplicity
+            for (input_data,output_data_cor),multiplicity in train_data_opt
+        ]).sum()
 
         return resid
 
@@ -560,60 +564,56 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
     num_nodes_dr = len(train_data[0][0])
     num_nodes_sr = 2*num_nodes_dr
 
+    train_data_hashable = [tuple(map(tuple, d)) for d in train_data]
+    train_data_opt = [(d, train_data_hashable.count(d)) for d in set(train_data_hashable)]
+
     if output_magnitude is None:
       output_magnitude = input_magnitude*k_out_value/(input_magnitude + k_out_value)
 
-    num_params_positions = num_nodes_sr*3
-    num_params = num_params_positions
- 
-    accept_hist_len = 50
+    min_position, max_position = position_bounds
 
     if init_positions is None:
-      init_positions = rng.uniform(position_bounds[0], position_bounds[1], (num_nodes_sr, 3))
-    init_params = np.flatten(init_positions)
+      init_positions = rng.uniform(min_position, max_position, (num_nodes_sr, dims))
 
-    params_cur = init_params
-    f_cur = loss_func(params_cur)
+    positions_cur = init_positions
+    f_cur = loss_func(positions_cur)
 
-    step_size = init_step_size*np.ones(num_params)
-    step_size_adjust = 1.02
+    accept_hist_len = 50
+    step_size = init_step_size*np.ones(num_nodes_sr)
+    step_size_adjust = 1.05
 
-    params_train_protocol = [ # list of info needed to train each parameter
-        (p_idx, node, position_bounds[0], position_bounds[1])
-        for p_idx, (node, _) 
-        in enumerate(it.product(range(num_nodes_sr), [0,1,2]))
-        if train_positions
-    ]
-
-    params_hist = []
-    accept_hist = -1*np.ones((accept_hist_len, num_params), dtype=int)
+    pos_hist = []
+    accept_hist = -1*np.ones((accept_hist_len, num_nodes_sr), dtype=int)
     if pbar_file is None:
       temps_iter = enumerate(anneal_protocol)
     else:
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
     for i, T in temps_iter:
-      steps = rng.normal(0, step_size, num_params)
-      for p_idx, node, low_bound, high_bound in params_train_protocol:
-        param_cur = params_cur[p_idx]
-        param_new = param_cur + steps[p_idx]
+      steps_mag = rng.normal(0, step_size, num_nodes_sr)
+      steps = np.array([random_point_on_sphere(step_mag, dims=dims, rng=rng) for step_mag in steps_mag])
+      for node in range(num_nodes_sr):
+        pos_cur = positions_cur[node,:]
+        pos_new = pos_cur + steps[node,:]
 
-        params_new = params_cur.copy()
-        params_new[p_idx] = param_new
+        positions_new = positions_cur.copy()
+        positions_new[node,:] = pos_new
   
-        if param_new > high_bound or param_new < low_bound: # throw out any moves outside the bounding box
+        if np.any(pos_new > max_position) or np.any(pos_new < min_position): # throw out any moves outside the bounding box
           f_new = np.inf
         else:
-          f_new = loss_func(params_new)
+          f_new = loss_func(positions_new)
 
         df = max(f_new - f_cur, 0)
         accept_prob = np.exp(-df/T) 
+#        print(f_cur, f_new, accept_prob)
         accept = False
         if rng.uniform(0,1) < accept_prob:
-          params_cur = params_new
+          positions_cur = positions_new
           f_cur = f_new
           accept = True
+
   
-        accept_hist[i%accept_hist_len, p_idx] = accept
+        accept_hist[i%accept_hist_len, node] = accept
 
       if i % accept_hist_len == accept_hist_len-1:
         accept_rate = np.mean(accept_hist, axis=0)
@@ -622,22 +622,42 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 #        print(accept_rate, accept_change, step_size)
 
       if verbose and i%500 == 0:
-        print(i, T, f_cur, params_cur)
+        K_fret, _, _ = rates_from_positions(positions_cur)
+        print(i, T, f_cur, positions_cur)
+        print(i, K_fret)
         print(i, np.mean(accept_hist, axis=0), step_size)
 
       if history_output_interval is not None and i%history_output_interval == 0:
-        params_hist.append((T, f_cur, params_cur))
+        pos_hist.append((T, f_cur, positions_cur))
 
   
   #    print(f'Monte Carlo optimization results: {f_cur}')
 
-    K_fret, k_out, k_decay = params_to_rates(params_cur)
+    # Center positions around the origin
+    positions_cur -= positions_cur.mean(axis=0)
+    
+
+    K_fret, k_out, k_decay = rates_from_positions(positions_cur)
+
+    node_names_dr = list(map(str, range(1, num_nodes_dr+1)))
+    node_names_sr = [f'{n_dr}{pm}' for n_dr in node_names_dr for pm in ['+','-']]
+    network = objects.network_from_rates(K_fret, k_out, np.zeros_like(k_out), k_decay = k_decay+k_0, node_names=node_names_sr)
+    node_types_sr = ['0']*num_nodes_sr
+    nodes_map = {n_dr: (node_names_sr[2*i], node_names_sr[2*i+1]) for i,n_dr in enumerate(node_names_dr)}
+
     output = {
       'K_fret': K_fret,
       'k_out': k_out,
       'k_decay': k_decay,
+
+      'positions': positions_cur,
+
+      'network': network,
+      'fluorophore_types': node_types_sr,
+      'pixel_to_fluorophore_map': nodes_map,
+
       'cost': f_cur,
-      'raw': params_hist
+      'raw': pos_hist
     }
    
     return output

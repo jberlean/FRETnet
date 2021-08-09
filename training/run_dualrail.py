@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, pathlib
 import itertools as it
 import pickle
 import math
@@ -10,8 +10,14 @@ from scipy.optimize import brute
 import scipy.special
 import tqdm
 
+# INTRAPACKAGE IMPORTS
+pkg_path = str(pathlib.Path(__file__).absolute().parent.parent)
+if pkg_path not in sys.path:
+  sys.path.append(pkg_path)
+
 import train_dualrail
 import train_utils
+from objects import IO
 
 
 ## Command-line arguments
@@ -56,7 +62,7 @@ reps = user_args.get('reps', 1)
 train_kwargs_MC = dict(low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
 train_kwargs_GD = dict(init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 100)
 train_kwargs_MG = dict(k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 2, verbose = False)
-train_kwargs_MGp = dict(k_0 = 1, r_0_cc = 7, position_bounds = (-1e3, 1e3), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 2, verbose = True)
+train_kwargs_MGp = dict(k_0 = 1, r_0_cc = 7, position_bounds = (-1e2, 1e2), dims = 3, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 20, verbose = True)
 
 train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
@@ -68,9 +74,13 @@ processes = user_args.get('processes', None)
 # Output parameters
 outputdir = user_args.get('outputdir', f'tmp/{seed}/')
 pbarpath = os.path.join(outputdir, f'pbar{train_str}_seed={seed}')
-outpath = os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}.p')
+outpath_prefix = os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}')
+outpath_full = f'{outpath_prefix}.p'
+outpath_best = f'{outpath_prefix}_best.p'
+outpath_best_excel = f'{outpath_prefix}_best.xlsx'
+outpath_best_mol2 = f'{outpath_prefix}_best.mol2'
 
-os.makedirs(os.path.dirname(outpath), exist_ok=True)
+os.makedirs(os.path.dirname(outpath_prefix), exist_ok=True)
 
 print(f'Output directory: {outputdir}')
 
@@ -118,13 +128,13 @@ if train_GD:
 if train_MG:
   results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
 if train_MGp:
-  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
+  results_MGp, train_seeds_MGp = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGp)
   
   
 
 pbar_file.close()
  
-# Output results
+# Output comprehensive results
 output = {
   'seed': seed,
   'num_nodes': num_nodes,
@@ -152,7 +162,83 @@ if train_MGp:
   output['train_seeds_MGp'] = train_seeds_MGp
   output['results_MGp'] = results_MGp
  
-with open(outpath,'wb') as outfile:
+with open(outpath_full,'wb') as outfile:
   pickle.dump(output, outfile)
 
+# Output results for best network, and XLSX/MOL2 representations of this network
+best_results_key, best_idx, best_cost = None, None, np.inf
+for results_key in ['results_MC', 'results_GD', 'results_MG', 'results_MGp']:
+  if results_key not in output:  continue
+  idx = np.argmin([res['cost'] for res in output[results_key]])
+  cost = output[results_key][idx]['cost']
+  if cost < best_cost:
+    best_results_key = results_key
+    best_idx = idx
+    best_cost = cost
 
+best_method = best_results_key[len('results_'):]
+best_args = output[f'train_args_{best_method}']
+
+best_result = output[best_results_key][best_idx]
+best_K_fret = best_result['K_fret']
+best_k_out = best_result['k_out']
+best_k_decay = best_result.get('k_decay', np.zeros_like(best_k_out))
+best_network = best_result.get('network', None)
+best_fluor_types = best_result.get('fluorophore_types', None)
+best_pixel_to_fluorophore_map = best_result.get('pixel_to_fluorophore_map', None)
+best_positions = best_result.get('positions', None)
+
+input_magnitude = best_args.get('input_magnitude', 1)
+k_out_value = best_args.get('k_out_value', 100)
+output_magnitude = best_args.get('output_magnitude', None)
+if output_magnitude is None:  output_magnitude = input_magnitude * k_out_value / (input_magnitude + k_out_value)
+
+num_pixels = num_nodes
+if best_network is not None:
+  num_fluorophores = len(best_network.nodes)
+  pixel_names = list(map(str, range(1, num_pixels+1)))
+  fluor_names = [n.name for n in best_network.nodes]
+  fluor_types = best_fluor_types
+  pixel_to_fluorophore_map = best_pixel_to_fluorophore_map
+else:
+  num_fluorophores = num_pixels*2
+  pixel_names = list(map(str, range(1, num_pixels+1)))
+  fluor_names = [f'{px}{pm}' for px in pixel_names for pm in ['+','-']]
+  fluor_types = ['0']*num_fluorophores
+  pixel_to_fluorophore_map = {px: (fluor_names[2*i], fluor_names[2*i+1]) for i,px in enumerate(pixel_names)}
+
+output_best = {
+  'num_pixels': num_pixels,
+  'num_fluorophores': num_fluorophores,
+  'pixel_names': pixel_names,
+  'fluorophore_names': fluor_names,
+  'pixel_to_fluorophore_map': pixel_to_fluorophore_map,
+
+  'input_magnitude': input_magnitude,
+  'output_magnitude': output_magnitude,
+
+  'K_fret': best_K_fret,
+  'k_out': best_k_out,
+  'k_decay': best_k_decay,
+
+  'positions': best_positions,
+
+  'network': best_network,
+
+  'args': best_args,
+  'method': best_method,
+  'training_metadata': {k:output[k] for k in output if not k.startswith('results')}
+}
+
+with open(outpath_best, 'wb') as outfile:
+  pickle.dump(output_best, outfile)
+
+positions_map = {f_name: best_positions[i,:] for i,f_name in enumerate(fluor_names)}
+
+IO.output_network_excel(outpath_best_excel, best_K_fret, fluor_names, positions_map, best_network)
+
+mol2_comments = [
+    f'# Source: {outpath_best}',
+    f'# Created by: Joseph Berleant',
+]
+IO.output_network_mol2(outpath_best_mol2, fluor_names, positions_map, fluor_types, outpath_prefix, mol2_comments)

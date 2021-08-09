@@ -165,7 +165,7 @@ def rate_to_distance(k_fret, k_0 = 1, r_0 = 1):
   return (k_0 / k_fret) ** (1/6.) * r_0
 
 def rate_from_positions(pos1, pos2, k_0, r_0):
-  return k_0 * (r_0 / np.linalg.norm(pos1, pos2))**6
+  return k_0 * (r_0 / np.linalg.norm(pos1-pos2))**6
 
 def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1, max_k = 1e3, dims=3):
   num_nodes = K_fret.shape[0]
@@ -214,8 +214,14 @@ def rates_to_positions(K_fret, k_off = None, k_0 = 1, r_0 = 1, max_k = 1e3, dims
 #
   return embedding
 
-def random_point_on_sphere(radius, center, dims=3):
-  pts_gauss = np.random.normal(0, 1, dims)
+def random_point_on_sphere(radius, center = None, dims=3, rng=None):
+  if center is None:  center = [0]*dims
+
+  if rng is None:
+    pts_gauss = np.random.normal(0, 1, dims)
+  else:
+    pts_gauss = rng.normal(0, 1, dims)
+
   pts_norm = pts_gauss / np.linalg.norm(pts_gauss) * radius
   return pts_norm + center
 
