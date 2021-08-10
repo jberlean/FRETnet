@@ -16,7 +16,7 @@ from objects import utils as objects
 
 from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates, rate_from_positions, random_point_on_sphere
 
-np.set_printoptions(precision=2)
+np.set_printoptions(precision=2, suppress=True)
 
 # TODO: use functions in train_singlerail.py rather than reimplementing them here
 
