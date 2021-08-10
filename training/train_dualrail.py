@@ -521,7 +521,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
    
     return output
 
-def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_cc = 1, position_bounds = (-1e2, 1e2), dims=3, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_cc = 1, position_bounds = (-1e2, 1e2), min_dist=1, dims=3, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_from_positions(positions):
         K_fret = np.array([
             [
@@ -599,8 +599,10 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 
         positions_new = positions_cur.copy()
         positions_new[node,:] = pos_new
-  
+
         if np.any(pos_new > max_position) or np.any(pos_new < min_position): # throw out any moves outside the bounding box
+          f_new = np.inf
+        elif (np.linalg.norm(pos_new.reshape((1,dims)) - positions_new, axis=1) < min_dist).sum() > 1: # throw out the move if two fluors are now below the minimum distance
           f_new = np.inf
         else:
           f_new = loss_func(positions_new)
