@@ -62,7 +62,7 @@ reps = user_args.get('reps', 1)
 train_kwargs_MC = dict(low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, verbose = False)
 train_kwargs_GD = dict(init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 100)
 train_kwargs_MG = dict(k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 2, verbose = False)
-train_kwargs_MGp = dict(k_0 = 1, r_0_cc = 7, position_bounds = (-1e2, 1e2), dims = 3, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 20, verbose = True)
+train_kwargs_MGp = dict(k_0 = 1, r_0_cc = 7, position_bounds = (-1e2, 1e2), dims = 3, input_magnitude = 1, output_magnitude = None, k_out_value = 100, anneal_protocol = list(np.logspace(0, -5, 5000)), accept_rate_min = 0.4, accept_rate_max = 0.6, init_step_size = 20, verbose = False)
 
 train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
@@ -183,7 +183,8 @@ best_result = output[best_results_key][best_idx]
 best_K_fret = best_result['K_fret']
 best_k_out = best_result['k_out']
 best_k_decay = best_result.get('k_decay', np.zeros_like(best_k_out))
-best_network = best_result.get('network', None)
+best_num_fluors = best_result.get('num_fluorophores', None)
+best_fluor_names = best_result.get('fluorophore_names', None)
 best_fluor_types = best_result.get('fluorophore_types', None)
 best_pixel_to_fluorophore_map = best_result.get('pixel_to_fluorophore_map', None)
 best_positions = best_result.get('positions', None)
@@ -194,18 +195,11 @@ output_magnitude = best_args.get('output_magnitude', None)
 if output_magnitude is None:  output_magnitude = input_magnitude * k_out_value / (input_magnitude + k_out_value)
 
 num_pixels = num_nodes
-if best_network is not None:
-  num_fluorophores = len(best_network.nodes)
-  pixel_names = list(map(str, range(1, num_pixels+1)))
-  fluor_names = [n.name for n in best_network.nodes]
-  fluor_types = best_fluor_types
-  pixel_to_fluorophore_map = best_pixel_to_fluorophore_map
-else:
-  num_fluorophores = num_pixels*2
-  pixel_names = list(map(str, range(1, num_pixels+1)))
-  fluor_names = [f'{px}{pm}' for px in pixel_names for pm in ['+','-']]
-  fluor_types = ['0']*num_fluorophores
-  pixel_to_fluorophore_map = {px: (fluor_names[2*i], fluor_names[2*i+1]) for i,px in enumerate(pixel_names)}
+num_fluorophores = best_num_fluors if best_num_fluors is not None else 2*num_pixels
+pixel_names = list(map(str, range(1, num_pixels+1)))
+fluor_names = best_fluor_names if best_fluor_names is not None else [f'{px}{pm}' for px in pixel_names for pm in ['+','-']]
+fluor_types = best_fluor_types if best_fluor_types is not None else ['0']*num_fluorophores
+pixel_to_fluorophore_map = best_pixel_to_fluorophore_map if best_pixel_to_fluorophore_map is not None else {px: (fluor_names[2*i], fluor_names[2*i+1]) for i,px in enumerate(pixel_names)}
 
 output_best = {
   'num_pixels': num_pixels,
@@ -223,7 +217,7 @@ output_best = {
 
   'positions': best_positions,
 
-  'network': best_network,
+#  'network': best_network,
 
   'args': best_args,
   'method': best_method,
