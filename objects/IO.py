@@ -44,13 +44,21 @@ def output_positions_excel_sheet(positions, fluorophore_names, wb, ws=None, titl
 def output_network_excel(path, K, fluorophore_names, positions = None, network = None, ideal_network = None):
   wb = openpyxl.Workbook()
 
+  ws = wb.active
+
   if ideal_network is not None:
-    output_network_excel_sheet(ideal_network, wb, wb.active, title='Network rates (ideal)')
+    output_network_excel_sheet(ideal_network, wb, ws=ws, title='Network rates (ideal)')
+    ws=None
+
   if network is not None:
-    output_network_excel_sheet(network, wb, title='Network rates')
-  output_K_fret_excel_sheet(K, fluorophore_names, wb, title='Full rate matrix')
+    output_network_excel_sheet(network, wb, ws=ws, title='Network rates')
+    ws=None
+
+  output_K_fret_excel_sheet(K, fluorophore_names, wb, ws=ws, title='Full rate matrix')
+  ws=None
+
   if positions is not None:
-    output_positions_excel_sheet(positions, fluorophore_names, wb, title='Fluorophore positions')
+    output_positions_excel_sheet(positions, fluorophore_names, wb, ws=ws, title='Fluorophore positions')
 
   wb.save(filename = path)
 

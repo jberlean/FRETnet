@@ -229,7 +229,7 @@ with open(outpath_best, 'wb') as outfile:
 
 positions_map = {f_name: best_positions[i,:] for i,f_name in enumerate(fluor_names)}
 
-IO.output_network_excel(outpath_best_excel, best_K_fret, fluor_names, positions_map, best_network)
+IO.output_network_excel(outpath_best_excel, best_K_fret, fluor_names, positions_map)
 
 mol2_comments = [
     f'# Source: {outpath_best}',
