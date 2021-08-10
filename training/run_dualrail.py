@@ -202,6 +202,9 @@ fluor_types = best_fluor_types if best_fluor_types is not None else ['0']*num_fl
 pixel_to_fluorophore_map = best_pixel_to_fluorophore_map if best_pixel_to_fluorophore_map is not None else {px: (fluor_names[2*i], fluor_names[2*i+1]) for i,px in enumerate(pixel_names)}
 
 output_best = {
+  'index': best_idx,
+  'cost': best_cost,
+
   'num_pixels': num_pixels,
   'num_fluorophores': num_fluorophores,
   'pixel_names': pixel_names,
