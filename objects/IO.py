@@ -67,6 +67,9 @@ def output_network_excel(path, K, fluorophore_names, positions = None, network =
 def output_network_mol2(path, fluorophore_names, positions, fluorophore_types, network_name, comments = None):
   num_fluorophores = len(fluorophore_names)
 
+  # convenience type conversion to get better mol2 display colors in chimerax
+  fluor_types_mol2 = list(map(lambda t: {'I': 'Cl', 'C': 'Cd', 'O': 'O', 'Q': 'Qg'}.get(t,t), fluorophore_types))
+
   with open(path, 'w') as outfile:
     if comments is not None:
       [print(comment, file=outfile) for comment in comments]
@@ -81,7 +84,7 @@ def output_network_mol2(path, fluorophore_names, positions, fluorophore_types, n
     
     print(f'@<TRIPOS>ATOM', file=outfile)
     for i, f in enumerate(fluorophore_names):
-      print(f'{i} {f} {positions[f][0]} {positions[f][1]} {positions[f][2]} {fluorophore_types[i]} 0 FRETNET', file=outfile)
+      print(f'{i} {f} {positions[f][0]} {positions[f][1]} {positions[f][2]} {fluor_types_mol2[i]} 0 FRETNET', file=outfile)
     print(file=outfile)
   
     print(f'@<TRIPOS>SUBSTRUCTURE', file=outfile)

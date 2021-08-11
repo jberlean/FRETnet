@@ -102,8 +102,10 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, decay
             Should be a length-2n 1d nonnegative array
         decay_rates_sr (np.array): The intrinsic decay rate constants of each node in the single-rail system (k_decay).
             Should be a length-2n 1d nonnegative array
-        input_magnitude (float): [default=1] The magnitude of input fluorescence into each node. 
+        input_magnitude (float or np.array): [default=1] The magnitude of input fluorescence into each node. 
             For each pixel, one of its corresponding fluorophores will have k_in=input_magnitude and the other k_in=0.
+            If a float, all pixels have the same magnitude of input. If np.array, pixels have individually specified
+            input magnitudes.
         output_magnitude (float): [default=1] The magnitude of output fluorescence expected from an "on" node.
             The output pixel value will be scaled so that if the range of (f_pos - f_neg) is 
               [-output_magnitude, +output_magnitude]
@@ -140,7 +142,6 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, decay
 
     return output_dr, output_sr
     
-
    
 
 ############
@@ -645,9 +646,10 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 
     node_names_dr = list(map(str, range(1, num_nodes_dr+1)))
     node_names_sr = [f'{n_dr}{pm}' for n_dr in node_names_dr for pm in ['+','-']]
-    network = objects.network_from_rates(K_fret, k_out, np.zeros_like(k_out), k_decay = k_decay+k_0, node_names=node_names_sr)
-    node_types_sr = ['0']*num_nodes_sr
+    fluor_names = node_names_sr
+    fluor_types = ['C']*num_nodes_sr
     nodes_map = {n_dr: (node_names_sr[2*i], node_names_sr[2*i+1]) for i,n_dr in enumerate(node_names_dr)}
+    fluor_map = dict(zip(node_names_sr, fluor_names))
 
     output = {
       'K_fret': K_fret,
@@ -657,17 +659,214 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
       'positions': positions_cur,
 
 #      'network': network,
-      'num_pixels': num_nodes_dr,
-      'num_fluorophores': num_nodes_sr,
-      'fluorophore_names': node_names_sr,
-      'fluorophore_types': node_types_sr,
-      'pixel_to_fluorophore_map': nodes_map,
+      'num_nodes_dr': num_nodes_dr,
+      'num_nodes_sr': num_nodes_sr,
+      'num_fluorophores': num_fluorophores,
+
+      'node_names_dr': node_names_dr,
+      'node_names_sr': node_names_sr,
+      'fluorophore_names': fluor_names,
+      'fluorophore_types': fluor_types,
+      'dr_to_sr_map': nodes_map,
+      'sr_to_fluor_map': fluor_map,
 
       'cost': f_cur,
       'raw': pos_hist
     }
    
     return output
+
+def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_fluor_info = {}, compute_fluor_info = {}, position_bounds = (-1e2, 1e2), min_dist=1, dims=3, input_magnitude = 100, output_magnitude = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+    def rates_from_positions(pos):
+        I_idxs = list(range(0, num_nodes_sr))
+        C_idxs = list(range(num_nodes_sr, 2*num_nodes_sr))
+        O_idxs = list(range(2*num_nodes_sr, 3*num_nodes_sr))
+        Q_idxs = list(range(3*num_nodes_sr, 4*num_nodes_sr))
+
+        # compute FRET rate constants between relevant fluorophore pairs
+        K_fret_IC = np.array([
+            [rate_from_positions(pos[n1,:], pos[n2,:], I_k0, IC_r0) for n2 in C_idxs] 
+            for n1 in I_idxs
+        ])
+        K_fret_CC = np.array([
+            [rate_from_positions(pos[n1,:], pos[n2,:], C_k0, CC_r0) if n1!=n2 else 0 for n2 in C_idxs] 
+            for n1 in C_idxs
+        ])
+        K_fret_CO = np.array([
+            [rate_from_positions(pos[n1,:], pos[n2,:], C_k0, CO_r0) for n2 in O_idxs] 
+            for n1 in C_idxs
+        ])
+        K_fret_CQ = np.array([
+            [rate_from_positions(pos[n1,:], pos[n2,:], C_k0, CQ_r0) for n2 in Q_idxs] 
+            for n1 in C_idxs
+        ])
+
+        # estimate probability of each input fluor (I) being excited
+        I_prob = input_magnitude / (K_fret_IC.sum(axis=1) + I_k0 + input_magnitude)
+
+        # estimate effective k_in, k_out, and k_decay for each compute fluor
+        k_in = I_prob @ K_fret_IC
+        k_out = K_fret_CO.sum(axis=1)
+        k_decay = K_fret_CQ.sum(axis=1) + C_k0
+
+        return K_fret_CC, k_in, k_out, k_decay
+
+    def loss_func(positions):
+        """ Compute network output assuming:
+            * Each input fluorophore has k_in = <input_magnitude>, so that if the fluorophore was very close to its
+              compute fluorophore then it would have k_in = <input_magnitude> also
+            * Each input fluorophore can be analyzed as if its k_off = (sum of k_FRET with each compute fluor)
+            * Each output fluorophore and quencher serves as an infinite sink (no saturation)
+            * Only FRET interactions are
+              input -> compute, compute <-> compute, compute -> output, and compute -> quencher
+        """
+        K_fret_CC, k_in, k_out, k_decay = rates_from_positions(positions)
+#        print(params)
+#        print(K_fret)
+#        print(k_out)
+#        print(k_decay)
+#        sys.exit(0)
+
+        resid = np.array([
+            loss.fn(
+                calc_network_output_dr(
+                    input_data,
+                    K_fret_CC,
+                    k_out,
+                    decay_rates_sr = k_decay,
+                    input_magnitude = k_in,
+                    output_magnitude = output_magnitude,
+                )[0],
+                output_data_cor
+            )**2 * multiplicity
+            for (input_data,output_data_cor),multiplicity in train_data_opt
+        ]).sum()
+
+        return resid
+
+    rng = np.random.default_rng(seed)
+
+    num_nodes_dr = len(train_data[0][0])
+    num_nodes_sr = 2*num_nodes_dr
+    num_fluorophores = 4*num_nodes_sr
+
+    train_data_hashable = [tuple(map(tuple, d)) for d in train_data]
+    train_data_opt = [(d, train_data_hashable.count(d)) for d in set(train_data_hashable)]
+
+    I_k0 = input_fluor_info.get('k_0', 1)
+    C_k0 = compute_fluor_info.get('k_0', 1)
+
+    IC_r0 = input_fluor_info.get('r_0', {}).get('compute', 2)
+    CC_r0 = compute_fluor_info.get('r_0', {}).get('compute', 7)
+    CO_r0 = compute_fluor_info.get('r_0', {}).get('output', 2)
+    CQ_r0 = compute_fluor_info.get('r_0', {}).get('quencher', 2)
+
+    min_position, max_position = position_bounds
+
+    if init_positions is None:
+      init_positions = rng.uniform(min_position, max_position, (num_fluorophores, dims))
+
+    positions_cur = init_positions
+    f_cur = loss_func(positions_cur)
+
+    accept_hist_len = 50
+    step_size = init_step_size*np.ones(num_fluorophores)
+    step_size_adjust = 1.05
+
+    pos_hist = []
+    accept_hist = -1*np.ones((accept_hist_len, num_fluorophores), dtype=int)
+    if pbar_file is None:
+      temps_iter = enumerate(anneal_protocol)
+    else:
+      temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
+    for i, T in temps_iter:
+      steps_mag = rng.normal(0, step_size, num_nodes_sr)
+      steps = np.array([random_point_on_sphere(step_mag, dims=dims, rng=rng) for step_mag in steps_mag])
+      for fluor_idx in range(num_fluorophores):
+        pos_cur = positions_cur[fluor_idx,:]
+        pos_new = pos_cur + steps[fluor_idx,:]
+
+        positions_new = positions_cur.copy()
+        positions_new[fluor_idx,:] = pos_new
+
+        if np.any(pos_new > max_position) or np.any(pos_new < min_position): # throw out any moves outside the bounding box
+          f_new = np.inf
+        elif (np.linalg.norm(pos_new.reshape((1,dims)) - positions_new, axis=1) < min_dist).sum() > 1: # throw out the move if two fluors are now closer than the minimum distance
+          f_new = np.inf
+        else:
+          f_new = loss_func(positions_new)
+
+        df = max(f_new - f_cur, 0)
+        accept_prob = np.exp(-df/T) 
+#        print(f_cur, f_new, accept_prob)
+        accept = False
+        if rng.uniform(0,1) < accept_prob:
+          positions_cur = positions_new
+          f_cur = f_new
+          accept = True
+
+  
+        accept_hist[i%accept_hist_len, fluor_idx] = accept
+
+      if i % accept_hist_len == accept_hist_len-1:
+        accept_rate = np.mean(accept_hist, axis=0)
+        accept_change = -1*(accept_rate - accept_rate_min < 0) + 1*(accept_rate - accept_rate_max > 0)
+        step_size *= step_size_adjust ** accept_change
+#        print(accept_rate, accept_change, step_size)
+
+      if verbose and i%500 == 0:
+        K_fret, _, _, _ = rates_from_positions(positions_cur)
+        print(i, T, f_cur, positions_cur)
+        print(i, K_fret)
+        print(i, np.mean(accept_hist, axis=0), step_size)
+
+      if history_output_interval is not None and i%history_output_interval == 0:
+        pos_hist.append((T, f_cur, positions_cur))
+
+  
+  #    print(f'Monte Carlo optimization results: {f_cur}')
+
+    # Center positions around the origin
+    positions_cur -= positions_cur.mean(axis=0)
+    
+
+    K_fret_CC, k_in, k_out, k_decay = rates_from_positions(positions_cur)
+
+    node_names_dr = list(map(str, range(1, num_nodes_dr+1)))
+    node_names_sr = [f'{n_dr}{pm}' for n_dr in node_names_dr for pm in ['+','-']]
+    fluor_names = [f'{node_name}_{role}' for node_name in node_names for role in ['I','C','O','Q']]
+#    network = objects.network_from_rates(K_fret, k_out, np.zeros_like(k_out), k_decay = k_decay+k_0, node_names=node_names_sr)
+    fluor_types = [role for _ in range(num_nodes_sr) for role in ['I','C','O','Q']]
+#    node_types_sr = ['0']*num_nodes_sr
+    nodes_map = {n_dr: (node_names_sr[2*i], node_names_sr[2*i+1]) for i,n_dr in enumerate(node_names_dr)}
+    fluor_map = {n_sr: tuple(fluor_names[4*i::num_nodes_sr]) for i,n_sr in enumerate(node_names_sr)}
+
+    output = {
+      'K_fret': K_fret_CC,
+      'k_in': k_in,
+      'k_out': k_out,
+      'k_decay': k_decay,
+
+      'positions': positions_cur,
+
+#      'network': network,
+      'num_nodes_dr': num_nodes_dr,
+      'num_nodes_sr': num_nodes_sr,
+      'num_fluorophores': num_fluorophores,
+
+      'node_names_dr': node_names_dr,
+      'node_names_sr': node_names_sr,
+      'fluorophore_names': fluor_names,
+      'fluorophore_types': fluor_types,
+      'dr_to_sr_map': nodes_map,
+      'sr_to_fluor_map': fluor_map,
+
+      'cost': f_cur,
+      'raw': pos_hist
+    }
+   
+    return output
+
 
 
 def train_dr_multiple_multiprocessing_aux(args):
