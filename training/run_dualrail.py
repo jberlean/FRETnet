@@ -285,7 +285,7 @@ output_best = {
   'cost': best_cost,
 
   'num_pixels': num_pixels,
-  'num_fluorophores': num_fluorophores,
+  'num_fluorophores': num_fluors,
   'pixel_names': pixel_names,
   'fluorophore_names': fluor_names,
   'fluorophore_types': fluor_types,
