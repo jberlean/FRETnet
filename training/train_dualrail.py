@@ -661,7 +661,7 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 #      'network': network,
       'num_nodes_dr': num_nodes_dr,
       'num_nodes_sr': num_nodes_sr,
-      'num_fluorophores': num_fluorophores,
+      'num_fluorophores': num_nodes_sr,
 
       'node_names_dr': node_names_dr,
       'node_names_sr': node_names_sr,

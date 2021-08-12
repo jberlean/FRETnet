@@ -68,7 +68,7 @@ def output_network_mol2(path, fluorophore_names, positions, fluorophore_types, n
   num_fluorophores = len(fluorophore_names)
 
   # convenience type conversion to get better mol2 display colors in chimerax
-  fluor_types_mol2 = list(map(lambda t: {'I': 'Cl', 'C': 'Cd', 'O': 'O', 'Q': 'Qg'}.get(t,t), fluorophore_types))
+  fluor_types_mol2 = list(map(lambda t: {'I': 'Cl', 'C': 'Cd', 'O': 'O', 'Q': 'Ag'}.get(t,t), fluorophore_types))
 
   with open(path, 'w') as outfile:
     if comments is not None:
