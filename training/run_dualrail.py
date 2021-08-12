@@ -147,7 +147,8 @@ processes = user_args.get('processes', None)
 # Output parameters
 outputdir = user_args.get('outputdir', f'tmp/{seed}/')
 pbarpath = os.path.join(outputdir, f'pbar{train_str}_seed={seed}')
-outpath_prefix = user_args.get('outfile_prefix', os.path.join(outputdir, f'train{train_str}_{reps}x_seed={seed}'))
+outfile_prefix = user_args.get('outfile_prefix', f'train{train_str}_{reps}x_seed={seed}')
+outpath_prefix = os.path.join(outputdir, outfile_prefix)
 outpath_full = f'{outpath_prefix}.p'
 outpath_best = f'{outpath_prefix}_best.p'
 outpath_best_excel = f'{outpath_prefix}_best.xlsx'
