@@ -266,7 +266,7 @@ if output_magnitude is None:  output_magnitude = input_magnitude * k_out_value /
 
 K_fret = best_result['K_fret']
 k_out = best_result['k_out']
-k_in = best_result.get('k_in', input_magnitude * np.ones_like(best_k_ut))
+k_in = best_result.get('k_in', input_magnitude * np.ones_like(best_k_out))
 k_decay = best_result.get('k_decay', np.zeros_like(best_k_out))
 num_pixels = best_result.get('num_nodes_dr', num_nodes)
 num_fluors = best_result.get('num_fluorophores', 2*num_pixels)
