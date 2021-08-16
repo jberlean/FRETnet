@@ -127,6 +127,9 @@ train_kwargs_MGpf = dict(
     compute_fluor_info = compute_fluor_info, 
     position_bounds = (-1e2, 1e2), 
     min_dist = 1, 
+    max_dist_CI = 6,
+    max_dist_CO = np.inf,
+    max_dist_CQ = np.inf,
     dims = 3, 
     input_magnitude = 100, 
     output_magnitude = 1, 
@@ -141,6 +144,7 @@ train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
 train_kwargs_MG.update(user_args.get('train_kwargs_MG', {}))
 train_kwargs_MGp.update(user_args.get('train_kwargs_MGp', {}))
+train_kwargs_MGpf.update(user_args.get('train_kwargs_MGpf', {}))
 
 processes = user_args.get('processes', None)
 
@@ -278,7 +282,8 @@ sr_to_fluor_map = best_result.get('sr_to_fluor_map', None)
 positions = best_result.get('positions', None)
 
 pixel_names = best_result.get('node_names_dr', list(map(str, range(1, num_pixels+1))))
-fluor_names = best_result.get('fluorophore_names', [f'{px}{pm}' for px in pixel_names for pm in ['+','-']])
+node_names_sr = best_result.get('node_names_sr', [f'{px}{pm}' for px in pixel_names for pm in ['+','-']])
+fluor_names = best_result.get('fluorophore_names', node_names_sr)
 fluor_types = best_result.get('fluorophore_types', ['C']*num_fluors)
 
 output_best = {
@@ -313,7 +318,7 @@ with open(outpath_best, 'wb') as outfile:
 
 positions_map = {f_name: positions[i,:] for i,f_name in enumerate(fluor_names)}
 
-IO.output_network_excel(outpath_best_excel, K_fret, fluor_names, positions_map)
+IO.output_network_excel(outpath_best_excel, K_fret, [f for f,t in zip(fluor_names, fluor_types) if t=='C'], positions_map)
 
 mol2_comments = [
     f'# Source: {outpath_best}',

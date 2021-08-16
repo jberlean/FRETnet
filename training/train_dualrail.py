@@ -141,7 +141,107 @@ def calc_network_output_dr(input_pattern, rate_matrix_sr, output_rates_sr, decay
 #    print(output_dr)
 
     return output_dr, output_sr
+
+def calc_real_network_output_sr(K_fret_CC, K_fret_IC, K_fret_CO, K_fret_CQ = None, C_k0 = 1, I_kin = None, I_k0 = 1, Ainv = None, verbose=False):
+    """
+    Computes the single-rail network output given all rate parameters (k_in, k_emit, k_decay, k_ij).
+    The single-rail network output is the output fluorescence from each node, given by p_i * k^i_emit.
+
+    Args:
+        rate_matrix (np.array): The weights (rate constants, arbitrary units) between nodes in the system.
+            Should be square and symmetric, with all diagonal entries equal to 0.
+        input_rates (np.array): The intrinsic excitation rates of each node (k_in).
+            Should be length-n 1d array, for network of n nodes.
+        output_rates (np.array): The intrinsic emission rate constants of each node (k_out). 
+            Should be a length-n 1d array, for network of n nodes.
+        decay_rates (np.array): The intrinsic decay rate constants of each node (k_decay). 
+            Should be a length-n 1d array, for network of n nodes.
+        Ainv (np.array): [optional] The precomputed inverse A matrix. If not given, linear system of eqns will be
+            solved without explicitly computing the inverse A matrix.
+            If given, should be a square nxn matrix.
     
+    Returns:
+        pred (np.array): The predicted values of each node's output.
+    """
+    # estimate effective k_in into each compute fluorophore, based on excitation of each input
+    I_prob_0 = I_kin / (K_fret_IC.sum(axis=1) + I_k0 + I_kin) # excitation probability of each input
+    C_kin = I_prob_0 @ K_fret_IC
+
+    # estimate effective k_out, and k_decay for each compute fluor
+    C_kout = K_fret_CO.sum(axis=1)
+    C_kdecay = K_fret_CQ.sum(axis=1) + C_k0
+
+    if Ainv is None:
+      num_nodes = len(C_kin)
+      A = -K_fret_CC
+      A[np.diag_indices(num_nodes)] = K_fret_CC.sum(axis=1) + C_kin + C_kout + C_kdecay
+      C_prob = np.linalg.solve(A, C_kin)
+    else:
+      C_prob = Ainv @ C_kin
+
+    return C_prob @ K_fret_CO
+
+   
+def calc_real_network_output_dr(input_pattern, K_fret_CC, K_fret_IC, K_fret_CO, K_fret_CQ = None, C_k0 = 1, I_k0 = 1, input_magnitude = 1, output_magnitude = 1, Ainv = None, verbose=False):
+    """
+    Computes the dual-rail network output given an input pattern and parameters of the single-rail system
+    (k_ij and k_out). The intrinsic excitation rate constants for the single-rail system are derived
+    from the input pattern. The number of nodes in the dual-rail system (n) should be half the number
+    in the single-rail system (2n).
+
+    It is assumed that node i in the dual-rail network has nodes 2i and 2i+1 from the single-rail network
+    as its + and - fluorophores, respectively.
+
+    Args:
+        input_pattern (np.array): The binary input data. 
+            Should be length-n 1d array with each element equal to -1 or +1.
+        rate_matrix_sr (np.array): A matrix of the FRET rate constants between nodes in the single-rail system. 
+            Should be a square and symmetric 2nx2n matrix, with diagonal entries equal to 0.
+        output_rates_sr (np.array): The intrinsic emission rate constants of each node in the single-rail system (k_out).
+            Should be a length-2n 1d nonnegative array
+        decay_rates_sr (np.array): The intrinsic decay rate constants of each node in the single-rail system (k_decay).
+            Should be a length-2n 1d nonnegative array
+        input_magnitude (float or np.array): [default=1] The magnitude of input fluorescence into each node. 
+            For each pixel, one of its corresponding fluorophores will have k_in=input_magnitude and the other k_in=0.
+            If a float, all pixels have the same magnitude of input. If np.array, pixels have individually specified
+            input magnitudes.
+        output_magnitude (float): [default=1] The magnitude of output fluorescence expected from an "on" node.
+            The output pixel value will be scaled so that if the range of (f_pos - f_neg) is 
+              [-output_magnitude, +output_magnitude]
+            then the range of pixel values will be
+              [-1, +1].
+        Ainv (np.array): [optional] The precomputed inverse A matrix, which may be given as an optimization. 
+            If not given, sytem of equations will be solved without explicitly computing this. 
+            If given, should be a square nxn matrix.
+
+    Returns:
+        output_dr (np.array): The dual-rail outputs, defined as the difference between the output fluorescence from
+            each dual-rail node's + and - fluorophores in the single-rail network. Should be length-n 1d array.
+        output_sr (np.array): The single-rail outputs, defined as the output fluorescence from each single-rail node.
+            Should be a length-2n 1d array.
+        
+    """
+    num_nodes_dr = len(input_pattern)
+    num_nodes_sr = 2*num_nodes_dr
+
+    if K_fret_CQ is None:
+      K_fret_CQ = np.zeros_like(K_fret_CO)
+
+    output_sr = calc_real_network_output_sr(
+        K_fret_CC = K_fret_CC, 
+        K_fret_IC = K_fret_IC, 
+        K_fret_CO = K_fret_CO, 
+        K_fret_CQ = K_fret_CQ,
+        C_k0 = C_k0,
+        I_kin = input_magnitude * k_in_from_input_data(input_pattern),
+        I_k0 = I_k0,
+        Ainv = Ainv,
+        verbose=verbose
+    )
+
+    output_dr = (output_sr[0::2] - output_sr[1::2]) / output_magnitude
+
+    return output_dr, output_sr
    
 
 ############
@@ -676,13 +776,20 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
    
     return output
 
-def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_fluor_info = {}, compute_fluor_info = {}, position_bounds = (-1e2, 1e2), min_dist=1, dims=3, input_magnitude = 100, output_magnitude = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
-    def rates_from_positions(pos):
-        I_idxs = list(range(0, num_nodes_sr))
-        C_idxs = list(range(num_nodes_sr, 2*num_nodes_sr))
-        O_idxs = list(range(2*num_nodes_sr, 3*num_nodes_sr))
-        Q_idxs = list(range(3*num_nodes_sr, 4*num_nodes_sr))
+def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_fluor_info = {}, compute_fluor_info = {}, position_bounds = (-1e2, 1e2), min_dist=1, max_dist_CI = np.inf, max_dist_CO = np.inf, max_dist_CQ = np.inf, dims=3, input_magnitude = 100, output_magnitude = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+    def initialize_positions():
+      init_pos = np.empty((num_fluorophores, dims))
+      for node_idx in range(num_nodes_sr):
+        C_pos = rng.uniform(min_position, max_position, (dims,))
+        init_pos[C_idxs[node_idx], :] = C_pos
+        for idx_lst, max_dist in zip([I_idxs, O_idxs, Q_idxs], [max_dist_CI, max_dist_CO, max_dist_CQ]):
+          if max_dist < max_position - min_position:
+            init_pos[idx_lst[node_idx], :] = random_point_on_sphere(max_dist * rng.uniform(0,1)**(1./dims), dims=dims, rng=rng) + C_pos
+          else:
+            init_pos[idx_lst[node_idx], :] = rng.uniform(min_position, max_position, (dims,))
+      return init_pos
 
+    def rates_from_positions(pos):
         # compute FRET rate constants between relevant fluorophore pairs
         K_fret_IC = np.array([
             [rate_from_positions(pos[n1,:], pos[n2,:], I_k0, IC_r0) for n2 in C_idxs] 
@@ -701,46 +808,79 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
             for n1 in C_idxs
         ])
 
-        # estimate probability of each input fluor (I) being excited
-        I_prob = input_magnitude / (K_fret_IC.sum(axis=1) + I_k0 + input_magnitude)
+        return K_fret_CC, K_fret_IC, K_fret_CO, K_fret_CQ
 
-        # estimate effective k_in, k_out, and k_decay for each compute fluor
-        k_in = I_prob @ K_fret_IC
-        k_out = K_fret_CO.sum(axis=1)
-        k_decay = K_fret_CQ.sum(axis=1) + C_k0
-
-        return K_fret_CC, k_in, k_out, k_decay
-
-    def loss_func(positions):
+    def loss_func(positions, verbose=False):
         """ Compute network output assuming:
             * Each input fluorophore has k_in = <input_magnitude>, so that if the fluorophore was very close to its
               compute fluorophore then it would have k_in = <input_magnitude> also
             * Each input fluorophore can be analyzed as if its k_off = (sum of k_FRET with each compute fluor)
-            * Each output fluorophore and quencher serves as an infinite sink (no saturation)
+            * Each output fluorophore serves as an infinite sink that immediately emits any FRET energy it receives
+            * Each quencher serves as an infinite sink (no emission though)
             * Only FRET interactions are
               input -> compute, compute <-> compute, compute -> output, and compute -> quencher
         """
-        K_fret_CC, k_in, k_out, k_decay = rates_from_positions(positions)
-#        print(params)
-#        print(K_fret)
-#        print(k_out)
-#        print(k_decay)
-#        sys.exit(0)
+        K_fret_CC, K_fret_IC, K_fret_CO, K_fret_CQ = rates_from_positions(positions)
 
-        resid = np.array([
-            loss.fn(
-                calc_network_output_dr(
-                    input_data,
-                    K_fret_CC,
-                    k_out,
-                    decay_rates_sr = k_decay,
-                    input_magnitude = k_in,
-                    output_magnitude = output_magnitude,
-                )[0],
-                output_data_cor
-            )**2 * multiplicity
+        k_in = np.diag(K_fret_IC)
+        k_out = np.diag(K_fret_CO)
+        k_decay = np.diag(K_fret_CQ) + C_k0
+
+#        resid = np.array([
+#            loss.fn(
+#                calc_real_network_output_dr(
+#                    input_data,
+#                    K_fret_CC = K_fret_CC,
+#                    K_fret_IC = K_fret_IC,
+#                    K_fret_CO = K_fret_CO,
+#                    K_fret_CQ = K_fret_CQ,
+#                    C_k0 = C_k0,
+#                    I_k0 = I_k0,
+#                    input_magnitude = input_magnitude,
+#                    output_magnitude = output_magnitude,
+#                )[0],
+#                output_data_cor
+#            )**2 * multiplicity
+#            for (input_data,output_data_cor),multiplicity in train_data_opt
+#        ]).sum()
+        output_data_all = [
+            calc_real_network_output_dr(
+                input_data,
+                K_fret_CC = K_fret_CC,
+                K_fret_IC = K_fret_IC,
+                K_fret_CO = K_fret_CO,
+                K_fret_CQ = K_fret_CQ,
+                C_k0 = C_k0,
+                I_k0 = I_k0,
+                input_magnitude = input_magnitude,
+                output_magnitude = output_magnitude,
+                verbose = (verbose and (i%500==0))
+            )
             for (input_data,output_data_cor),multiplicity in train_data_opt
+        ]
+        resid = np.array([
+            loss.fn(output_data[0], output_data_cor)**2 * multiplicity
+            for output_data, ((input_data,output_data_cor),multiplicity) in zip(output_data_all, train_data_opt)
         ]).sum()
+
+        if verbose:
+          for output_data, ((input_data,output_data_cor),multiplicity) in zip(output_data_all, train_data_opt):
+            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor))
+
+#        resid = np.array([
+#            loss.fn(
+#                calc_network_output_dr(
+#                    input_data,
+#                    rate_matrix_sr = K_fret_CC,
+#                    output_rates_sr = k_out,
+#                    decay_rates_sr = k_decay,
+#                    input_magnitude = input_magnitude * k_in / (k_in + input_magnitude),
+#                    output_magnitude = output_magnitude,
+#                )[0],
+#                output_data_cor
+#            )**2 * multiplicity
+#            for (input_data,output_data_cor),multiplicity in train_data_opt
+#        ]).sum()
 
         return resid
 
@@ -763,11 +903,24 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
 
     min_position, max_position = position_bounds
 
-    if init_positions is None:
-      init_positions = rng.uniform(min_position, max_position, (num_fluorophores, dims))
+    I_idxs = list(range(0, num_nodes_sr))
+    C_idxs = list(range(num_nodes_sr, 2*num_nodes_sr))
+    O_idxs = list(range(2*num_nodes_sr, 3*num_nodes_sr))
+    Q_idxs = list(range(3*num_nodes_sr, 4*num_nodes_sr))
+
+    max_dist_matrix = np.inf * np.ones((num_fluorophores, num_fluorophores))
+    for node_idx in range(num_nodes_sr):
+      max_dist_matrix[C_idxs[node_idx], I_idxs[node_idx]] = max_dist_CI
+      max_dist_matrix[I_idxs[node_idx], C_idxs[node_idx]] = max_dist_CI
+      max_dist_matrix[C_idxs[node_idx], O_idxs[node_idx]] = max_dist_CO
+      max_dist_matrix[O_idxs[node_idx], C_idxs[node_idx]] = max_dist_CO
+      max_dist_matrix[C_idxs[node_idx], Q_idxs[node_idx]] = max_dist_CQ
+      max_dist_matrix[Q_idxs[node_idx], C_idxs[node_idx]] = max_dist_CQ
+
+    if init_positions is None:  init_positions = initialize_positions()
 
     positions_cur = init_positions
-    f_cur = loss_func(positions_cur)
+    f_cur = np.inf#loss_func(positions_cur)
 
     accept_hist_len = 50
     step_size = init_step_size*np.ones(num_fluorophores)
@@ -780,7 +933,7 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
     else:
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
     for i, T in temps_iter:
-      steps_mag = rng.normal(0, step_size, num_nodes_sr)
+      steps_mag = rng.normal(0, step_size, num_fluorophores)
       steps = np.array([random_point_on_sphere(step_mag, dims=dims, rng=rng) for step_mag in steps_mag])
       for fluor_idx in range(num_fluorophores):
         pos_cur = positions_cur[fluor_idx,:]
@@ -789,9 +942,11 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
         positions_new = positions_cur.copy()
         positions_new[fluor_idx,:] = pos_new
 
+        dists_new = np.linalg.norm(pos_new.reshape((1,dims)) - positions_new, axis=1)
+
         if np.any(pos_new > max_position) or np.any(pos_new < min_position): # throw out any moves outside the bounding box
           f_new = np.inf
-        elif (np.linalg.norm(pos_new.reshape((1,dims)) - positions_new, axis=1) < min_dist).sum() > 1: # throw out the move if two fluors are now closer than the minimum distance
+        elif (dists_new < min_dist).sum() > 1 or np.any(dists_new > max_dist_matrix[fluor_idx,:]): # throw out the move if two fluors are now closer than the minimum distance or if two fluors are too far apart based on max_dist_matrix
           f_new = np.inf
         else:
           f_new = loss_func(positions_new)
@@ -805,7 +960,6 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
           f_cur = f_new
           accept = True
 
-  
         accept_hist[i%accept_hist_len, fluor_idx] = accept
 
       if i % accept_hist_len == accept_hist_len-1:
@@ -815,10 +969,14 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
 #        print(accept_rate, accept_change, step_size)
 
       if verbose and i%500 == 0:
-        K_fret, _, _, _ = rates_from_positions(positions_cur)
+        K_fret, K_input, K_output, K_quench = rates_from_positions(positions_cur)
         print(i, T, f_cur, positions_cur)
         print(i, K_fret)
+        print(i, K_input)
+        print(i, K_output)
+        print(i, K_quench)
         print(i, np.mean(accept_hist, axis=0), step_size)
+        loss_func(positions_cur, verbose=True)
 
       if history_output_interval is not None and i%history_output_interval == 0:
         pos_hist.append((T, f_cur, positions_cur))
@@ -830,19 +988,32 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
     positions_cur -= positions_cur.mean(axis=0)
     
 
-    K_fret_CC, k_in, k_out, k_decay = rates_from_positions(positions_cur)
+    K_fret_CC, K_fret_IC, K_fret_CO, K_fret_CQ = rates_from_positions(positions_cur)
+    k_in = np.diag(K_fret_IC)
+    k_out = np.diag(K_fret_CO)
+    k_decay = np.diag(K_fret_CQ) + C_k0
 
     node_names_dr = list(map(str, range(1, num_nodes_dr+1)))
     node_names_sr = [f'{n_dr}{pm}' for n_dr in node_names_dr for pm in ['+','-']]
-    fluor_names = [f'{node_name}_{role}' for node_name in node_names for role in ['I','C','O','Q']]
+    fluor_names = [f'{node_name}_{role}' for role in ['I','C','O','Q'] for node_name in node_names_sr]
 #    network = objects.network_from_rates(K_fret, k_out, np.zeros_like(k_out), k_decay = k_decay+k_0, node_names=node_names_sr)
-    fluor_types = [role for _ in range(num_nodes_sr) for role in ['I','C','O','Q']]
+    fluor_types = [role for role in ['I','C','O','Q'] for _ in range(num_nodes_sr)]
 #    node_types_sr = ['0']*num_nodes_sr
     nodes_map = {n_dr: (node_names_sr[2*i], node_names_sr[2*i+1]) for i,n_dr in enumerate(node_names_dr)}
     fluor_map = {n_sr: tuple(fluor_names[4*i::num_nodes_sr]) for i,n_sr in enumerate(node_names_sr)}
 
     output = {
+      'I_k0': I_k0,
+      'C_k0': C_k0,
+      'IC_r0': IC_r0,
+      'CC_r0': CC_r0,
+      'CO_r0': CO_r0,
+      'CQ_r0': CQ_r0,
+
       'K_fret': K_fret_CC,
+      'K_in': K_fret_IC,
+      'K_out': K_fret_CO,
+      'K_quench': K_fret_CQ,
       'k_in': k_in,
       'k_out': k_out,
       'k_decay': k_decay,
