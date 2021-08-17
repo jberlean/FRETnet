@@ -858,14 +858,14 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
             )
             for (input_data,output_data_cor),multiplicity in train_data_opt
         ]
-        resid = np.array([
+        resid = np.sqrt(np.array([
             loss.fn(output_data[0], output_data_cor)**2 * multiplicity
-            for output_data, ((input_data,output_data_cor),multiplicity) in zip(output_data_all, train_data_opt)
-        ]).sum()
+            for output_data, ((input_data,output_data_cor), multiplicity) in zip(output_data_all, train_data_opt)
+        ]).sum() / len(train_data))
 
         if verbose:
           for output_data, ((input_data,output_data_cor),multiplicity) in zip(output_data_all, train_data_opt):
-            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor))
+            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), multiplicity)
 
 #        resid = np.array([
 #            loss.fn(
@@ -972,9 +972,9 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
         K_fret, K_input, K_output, K_quench = rates_from_positions(positions_cur)
         print(i, T, f_cur, positions_cur)
         print(i, K_fret)
-        print(i, K_input)
-        print(i, K_output)
-        print(i, K_quench)
+#        print(i, K_input)
+#        print(i, K_output)
+#        print(i, K_quench)
         print(i, np.mean(accept_hist, axis=0), step_size)
         loss_func(positions_cur, verbose=True)
 

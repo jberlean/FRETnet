@@ -23,7 +23,7 @@ from objects import utils as objects
 # GENERIC STEADY-STATE BEHAVIOR ANALYSIS
 ##################################
 
-def probability_by_node(network, hanlike=True):
+def probability_by_node(network, hanlike=True, full=False):
   """ Computes the probability of each node being excited at steady state.
       Calculation may be very inefficient for large non-HAN-like networks.
 
@@ -34,7 +34,9 @@ def probability_by_node(network, hanlike=True):
       Returns:
         probabilities (dict): Maps each Node object in the Network to its probability of being excited
   """
-  if hanlike:
+  if hanlike and full:
+    return _probability_by_node_hanlike_full(network)
+  elif hanlike:
     return _probability_by_node_hanlike(network)
   else:
     return _probability_by_node_general(network)
@@ -137,7 +139,7 @@ def probability_by_network_state(network, eps = 10**-10):
 
   
 
-def node_outputs(network, hanlike=True):
+def node_outputs(network, hanlike=True, full=False):
   """ Computes the network output from each node, which is defined as the flux of emission from each node.
       Energy flux out of the network due to non-radiative decay (k_decay) is not included.
 
@@ -148,7 +150,9 @@ def node_outputs(network, hanlike=True):
       Returns:
         outputs (dict): Maps each Node object in the Network to its flux out of the network.
   """
-  if hanlike:
+  if hanlike and full:
+    return _node_outputs_hanlike_full(network)
+  elif hanlike:
     return _node_outputs_hanlike(network)
   else:
     return _node_outputs_general(network)
@@ -199,6 +203,7 @@ def _probability_by_node_hanlike(network):
       Returns:
         probabilities (dict): Maps each Node object in the Network to its probability of being excited
   """
+
   nodes = network.nodes
   num_nodes = len(nodes)
 
@@ -226,18 +231,55 @@ def _probability_by_node_hanlike(network):
   if not (A.T == A).all():
     print(f'WARNING: Matrix A for network {network} is not symmetric. Network may not be symmetric.')
 
-  # Calculate inverse of A
-  try:
-    Ainv = np.linalg.inv(A)
-  except:
-    raise ValueError(f'Singular matrix A computed from network {network}')
-
   # Compute probabilities dictionary
-  # TODO: switch to using numpy's linear system of equations solver (more efficient than explicitly finding inverse)
-  probs_vec = Ainv @ k_in
+  probs_vec = np.linalg.solve(A, k_in)
   probs_dict = {node: p for node,p in zip(nodes, probs_vec)}
 
   return probs_dict
+
+def _probability_by_node_hanlike_full(network):
+  """ Computes the probability of each node being excited at steady state in a HAN-like FRETnet.
+
+      Arguments:
+        network (objects.utils.Network): The Network object to be analyzed.
+
+      Returns:
+        probabilities (dict): Maps each Node object in the Network to its probability of being excited
+  """
+  input_nodes = network.input_nodes
+  compute_nodes = network.compute_nodes
+  num_nodes = len(compute_nodes)
+
+  compute_node_idxs = dict(enumerate(compute_nodes))
+
+  # Get relevant FRET matrices
+  K_fret_IC = network.get_K_fret_IC()
+  K_fret_CC = network.get_K_fret_CC()
+  K_fret_CO = network.get_K_fret_CO()
+  K_fret_CQ = network.get_K_fret_CQ()
+
+  # Estimate effective k_in into each compute fluorophore, based on excitation of each input
+  I_prob = np.array([n.production_rate / (K_fret_IC[i,:].sum() + n.production_rate + n.decay_rate + n.emit_rate) for i,n in enumerate(input_nodes)])
+  C_kin = I_prob @ K_fret_IC
+
+  # Estimate effective k_out and k_decay for each compute fluor
+  C_kout = network.get_k_out()
+  C_kdecay = network.get_k_decay()
+
+  # Compute A matrix and k_in
+  A = -K_fret_CC
+  A[np.diag_indices(num_nodes)] = K_fret_CC.sum(axis=1) + C_kin + C_kout + C_kdecay
+
+  # Check symmetric (but try to do the computation regardless)
+  if not (A.T == A).all():
+    print(f'WARNING: Matrix A for network {network} is not symmetric. Network may not be symmetric.')
+
+  # Compute probabilities dictionary
+  C_prob = np.linalg.solve(A, C_kin)
+  probs_dict = {compute_node: p for compute_node,p in zip(compute_nodes, C_prob)}
+
+  return probs_dict
+
 
 def _probability_by_node_general(network):
   nodes = network.nodes
@@ -271,6 +313,26 @@ def _node_outputs_hanlike(network):
 
   node_outputs = dict(zip(nodes, prob_vector*k_out))
   return node_outputs
+
+def _node_outputs_hanlike_full(network):
+  """ Computes the network output from each node, defined as the rate of exciton loss due to radiative decay.
+      Exciton loss due to non-radiative decay does not contribute to network output.
+
+      Arguments:
+        network (objects.utils.Network): The Network object to be analyzed.
+
+      Returns:
+        outputs (dict): Maps each Node object in the Network to its flux out of the network.
+  """
+  nodes = network.compute_nodes
+
+  probs = _probability_by_node_hanlike_full(network)
+  prob_vector = np.array([probs[n] for n in nodes])
+  K_out = network.get_K_fret_CO()
+
+  node_outputs = dict(zip(nodes, prob_vector@K_out))
+  return node_outputs
+
 
 def _node_outputs_general(network):
   nodes = network.nodes

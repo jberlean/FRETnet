@@ -263,6 +263,128 @@ class Network(object):
 
     return cts/self._time
 
+class HANlikeNetwork(Network):
+  pass
+
+class FullHANlikeNetwork(HANlikeNetwork):
+  def __init__(self, input_nodes = [], compute_nodes = [], output_nodes = [], quencher_nodes = []):
+    self._nodes = input_nodes + compute_nodes + output_nodes + quencher_nodes
+    self._input_nodes = input_nodes[:]
+    self._compute_nodes = compute_nodes[:]
+    self._output_nodes = output_nodes[:]
+    self._quencher_nodes = quencher_nodes[:]
+
+    num_fluor_groups = len(input_nodes)
+    self._input_node_idxs = list(range(num_fluor_groups))
+    self._compute_node_idxs = list(range(num_fluor_groups, 2*num_fluor_groups))
+    self._output_node_idxs = list(range(2*num_fluor_groups, 3*num_fluor_groups))
+    self._quencher_node_idxs = list(range(3*num_fluor_groups, 4*num_fluor_groups))
+
+    self._stats = {}
+    self._node_stats = {n: {} for n in self._nodes}
+
+    self._time = 0.0
+
+  @property
+  def nodes(self):
+    return self._nodes[:]
+  @property
+  def input_nodes(self):
+    return self._input_nodes[:]
+  @property
+  def compute_nodes(self):
+    return self._compute_nodes[:]
+  @property
+  def output_nodes(self):
+    return self._output_nodes[:]
+  @property
+  def quencher_nodes(self):
+    return self._quencher_nodes[:]
+
+  def _get_K_fret_nodesubset(self, donor_nodes, acceptor_nodes):
+    D_num_nodes = len(donor_nodes)
+    A_num_nodes = len(acceptor_nodes)
+
+    A_node_idxs_dict = {n: i for i,n in enumerate(acceptor_nodes)}
+
+    K = np.zeros((D_num_nodes, A_num_nodes))
+    for i,donor in enumerate(donor_nodes):
+      for e in donor.out_edges:
+        if e.output in A_node_idxs_dict:
+          j = A_node_idxs_dict[e.output]
+          K[i,j] = e.rate
+
+    return K
+    
+
+  def get_K_fret_IC(self):
+    return self._get_K_fret_nodesubset(self._input_nodes, self._compute_nodes)
+
+  def get_K_fret_CC(self):
+    return self._get_K_fret_nodesubset(self._compute_nodes, self._compute_nodes)
+
+  def get_K_fret_CO(self):
+    return self._get_K_fret_nodesubset(self._compute_nodes, self._output_nodes)
+
+  def get_K_fret_CQ(self):
+    return self._get_K_fret_nodesubset(self._compute_nodes, self._quencher_nodes)
+
+  def get_K_fret(self):
+    return self.get_K_fret_CC()
+
+  def get_k_out(self):
+    k_out = np.array([sum([e.rate for e in n.out_edges if e.output in self._output_nodes]) for n in self._compute_nodes])
+    return k_out
+  
+  def get_k_decay(self):
+    compute_nodes = [self._nodes[idx] for idx in self._compute_node_idxs]
+    quencher_nodes = [self._nodes[idx] for idx in self._quencher_node_idxs]
+    k_decay = np.array([sum([e.rate for e in n.out_edges if e.output in self._quencher_nodes])+n.emit_rate+n.decay_rate for n in self._compute_nodes])
+    return k_decay
+
+  def compute_kfret_matrix(self):
+    return self.get_K_fret()
+
+  def choose_reaction(self):
+    node_propensities = np.array([n.propensity() for n in self._nodes])
+    propensity = node_propensities.sum()
+    if propensity == 0:
+      print('WARNING: No valid reaction found at time {}'.format(self._time))
+      return None
+
+    dt = np.random.exponential(1./propensity)
+    node = np.random.choice(self._nodes, p=node_propensities/propensity)
+
+    rxn = node.choose_reaction()
+    return rxn, dt
+
+  def step_forward(self):
+    rxn, dt = self.choose_reaction()
+    for node in self._nodes:
+      self._node_stats[node][node.status] = self._node_stats[node].get(node.status, 0) + dt
+    rxn.execute()
+    self._time += dt
+
+    keys = it.product(['*', rxn.mode], ['*', rxn.input], ['*', rxn.output])
+    for key in keys:
+      self._stats[key] = self._stats.get(key, 0) + 1
+
+    changed_nodes = [rxn.input, rxn.output]
+    for node in changed_nodes:
+      if node is None:  continue
+      node.update()
+      for e in node.in_edges:  e.input.update()
+
+    return rxn, dt, changed_nodes
+
+  def activation(self, node):
+    if self._time == 0.0:  return 0.0
+
+    cts = self._stats.get(('*', node, '*'), 0)
+
+    return cts/self._time
+
+
 ######
 # CONVENIENCE FUNCTIONS
 ######
@@ -285,4 +407,25 @@ def network_from_rates(K_fret, k_out, k_in, k_decay = None, node_names = None):
 
     return Network(nodes)
 
+
+def full_HANlike_network_from_rates(K_fret_IC, K_fret_CC, K_fret_CO, K_fret_CQ, I_kin, I_k0=1, I_kdecay=0, C_k0=1, C_kdecay=0, node_names=None):
+    num_nodes = K_fret_IC.shape[0]
+
+    if node_names is None:
+      node_names = [f'node{i}' for i in range(num_nodes)]
+    elif len(node_names) < num_nodes:
+      node_names.extend([f'node{i}' for i in range(len(node_names), num_nodes)])
+
+    input_nodes = [InputNode(f'{name}_I', production_rate=k_in, emit_rate=I_k0, decay_rate=I_kdecay) for name,k_in in zip(node_names, I_kin)]
+    compute_nodes = [Node(f'{name}_C', emit_rate=C_k0, decay_rate = C_kdecay) for name in node_names]
+    output_nodes = [Node(f'{name}_O', emit_rate=0, decay_rate=0) for name in node_names]
+    quencher_nodes = [Node(f'{name}_Q', emit_rate=0, decay_rate=0) for name in node_names]
+
+    for i,j in it.product(range(num_nodes), repeat=2):
+        compute_nodes[j].add_input(input_nodes[i], K_fret_IC[i,j])
+        if i!=j:  compute_nodes[j].add_input(compute_nodes[i], K_fret_CC[i,j])
+        output_nodes[j].add_input(compute_nodes[i], K_fret_CO[i,j])
+        quencher_nodes[j].add_input(compute_nodes[i], K_fret_CQ[i,j])
+
+    return FullHANlikeNetwork(input_nodes, compute_nodes, output_nodes, quencher_nodes)
 
