@@ -23,7 +23,7 @@ from objects import utils as objects
 # GENERIC STEADY-STATE BEHAVIOR ANALYSIS
 ##################################
 
-def probability_by_node(network, hanlike=True, full=False):
+def probability_by_node(network, hanlike=None, full=None):
   """ Computes the probability of each node being excited at steady state.
       Calculation may be very inefficient for large non-HAN-like networks.
 
@@ -34,6 +34,9 @@ def probability_by_node(network, hanlike=True, full=False):
       Returns:
         probabilities (dict): Maps each Node object in the Network to its probability of being excited
   """
+  if hanlike is None:  hanlike = isinstance(network, objects.HANlikeNetwork)
+  if full is None:  full = isinstance(network, objects.FullHANlikeNetwork)
+
   if hanlike and full:
     return _probability_by_node_hanlike_full(network)
   elif hanlike:
@@ -139,7 +142,7 @@ def probability_by_network_state(network, eps = 10**-10):
 
   
 
-def node_outputs(network, hanlike=True, full=False):
+def node_outputs(network, hanlike=None, full=None):
   """ Computes the network output from each node, which is defined as the flux of emission from each node.
       Energy flux out of the network due to non-radiative decay (k_decay) is not included.
 
@@ -150,6 +153,9 @@ def node_outputs(network, hanlike=True, full=False):
       Returns:
         outputs (dict): Maps each Node object in the Network to its flux out of the network.
   """
+  if hanlike is None:  hanlike = isinstance(network, objects.HANlikeNetwork)
+  if full is None:  full = isinstance(network, objects.FullHANlikeNetwork)
+
   if hanlike and full:
     return _node_outputs_hanlike_full(network)
   elif hanlike:
@@ -157,7 +163,7 @@ def node_outputs(network, hanlike=True, full=False):
   else:
     return _node_outputs_general(network)
 
-def node_fluxes(network, hanlike=True):
+def node_fluxes(network, hanlike=None):
   """ Computes the total flux out of each node, combining flux due to FRET as well as emission/decay. This
       should be equal to the flux into each node.
       TODO: Optimize computation in the case of HAN-like networks, where we can avoid computing explicitly the
@@ -169,6 +175,8 @@ def node_fluxes(network, hanlike=True):
       Returns:
         fluxes (dict): Maps each Node object in the Network to its total flux within and out of the network
   """
+  if hanlike is None:  hanlike = isinstance(network, objects.HANlikeNetwork)
+
   nodes = network.nodes
   num_nodes = len(nodes)
   node_idxs = {n:i for i,n in enumerate(nodes)}
@@ -248,7 +256,8 @@ def _probability_by_node_hanlike_full(network):
   """
   input_nodes = network.input_nodes
   compute_nodes = network.compute_nodes
-  num_nodes = len(compute_nodes)
+  node_groups = network.node_groups
+  num_nodes = len(node_groups)
 
   compute_node_idxs = dict(enumerate(compute_nodes))
 
@@ -276,7 +285,7 @@ def _probability_by_node_hanlike_full(network):
 
   # Compute probabilities dictionary
   C_prob = np.linalg.solve(A, C_kin)
-  probs_dict = {compute_node: p for compute_node,p in zip(compute_nodes, C_prob)}
+  probs_dict = {ng: p for ng,p in zip(node_groups, C_prob)}
 
   return probs_dict
 
@@ -324,7 +333,7 @@ def _node_outputs_hanlike_full(network):
       Returns:
         outputs (dict): Maps each Node object in the Network to its flux out of the network.
   """
-  nodes = network.compute_nodes
+  nodes = network.node_groups
 
   probs = _probability_by_node_hanlike_full(network)
   prob_vector = np.array([probs[n] for n in nodes])
