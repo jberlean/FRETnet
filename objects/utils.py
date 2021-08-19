@@ -345,8 +345,8 @@ class FullHANlikeNetwork(HANlikeNetwork):
         sum(e.rate for e in n.out_edges if e.output in off_nodes)+n.emit_rate+n.decay_rate for n in self._compute_nodes)
     ) - self.get_k_out()
     return k_decay
-
-    return np.fromiter(n.decay_rate for n in self._nodes)
+  def get_k_decay_intrinsic(self):
+    return np.fromiter(n.emit_rate + n.decay_rate for n in self._nodes)
  
   def _get_K_fret_nodesubset(self, donor_nodes, acceptor_nodes):
     D_num_nodes = len(donor_nodes)
@@ -426,5 +426,5 @@ def full_HANlike_network_from_rates(K_fret_IC, K_fret_CC, K_fret_CO, K_fret_CQ, 
         output_nodes[j].add_input(compute_nodes[i], K_fret_CO[i,j])
         quencher_nodes[j].add_input(compute_nodes[i], K_fret_CQ[i,j])
 
-    return FullHANlikeNetwork(input_nodes, compute_nodes, output_nodes, quencher_nodes)
+    return FullHANlikeNetwork(input_nodes, compute_nodes, output_nodes, quencher_nodes, node_group_names = node_names)
 

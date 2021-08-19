@@ -25,7 +25,7 @@ import objects.utils as objects
 ##  - Allow toggling of node states directly
 ##  - Allow toggling of network edges
 
-def test_dualrail_network(network, pixels = None, pixel_to_node_map = None, input_magnitude = 1, output_magnitude = 1, img_rows = None, img_cols = None):
+def test_dualrail_network(network, pixels = None, pixel_to_node_sr_index_map = None, input_magnitude = 1, output_magnitude = 1, img_rows = None, img_cols = None):
   num_nodes = len(network.nodes)
   num_pixels = num_nodes // 2
 

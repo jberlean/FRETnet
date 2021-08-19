@@ -48,7 +48,7 @@ rng = np.random.default_rng(seed)
 
 # Parameters for generating stored memories
 stored_data_user = user_args.get('stored_data', None)
-num_nodes = user_args.get('num_nodes', 4)
+num_nodes_dualrail = user_args.get('num_nodes', 4)
 num_patterns = user_args.get('num_patterns', 3)
 
 # Parameters for generating training data
@@ -167,13 +167,13 @@ print(f'Output directory: {outputdir}')
 
 # Generate stored memories
 if stored_data_user is None:
-  stored_data_ints = rng.permutation(2**num_nodes)[:num_patterns]
+  stored_data_ints = rng.permutation(2**num_nodes_dualrail)[:num_patterns]
   stored_data = [
-      np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes))])
+      np.array([int(v)*2-1 for v in format(i,'0{}b'.format(num_nodes_dualrail))])
       for i in stored_data_ints
   ]
 else:
-  stored_data_ints = rng.permutation(2**num_nodes)[:num_patterns] # to make sure RNG is in the same state
+  stored_data_ints = rng.permutation(2**num_nodes_dualrail)[:num_patterns] # to make sure RNG is in the same state
   stored_data = list(map(np.array, stored_data_user))
 
 print('Stored data:')
@@ -273,30 +273,40 @@ K_fret = best_result['K_fret']
 k_out = best_result['k_out']
 k_in = best_result.get('k_in', input_magnitude * np.ones_like(k_out))
 k_decay = best_result.get('k_decay', np.zeros_like(k_out))
-num_pixels = best_result.get('num_nodes_dr', num_nodes)
-num_fluors = best_result.get('num_fluorophores', 2*num_pixels)
-fluor_names = best_result.get('fluorophore_names', None)
-fluor_types = best_result.get('fluorophore_types', None)
-dr_to_sr_map = best_result.get('dr_to_sr_map', None)
-sr_to_fluor_map = best_result.get('sr_to_fluor_map', None)
-positions = best_result.get('positions', None)
+K_out = best_result.get('K_out', np.diag(k_out))
+K_in = best_result.get('K_in', np.diag(k_in))
+K_quench = best_result.get('K_quench', np.zeros_like(K_out))
 
-pixel_names = best_result.get('node_names_dr', list(map(str, range(1, num_pixels+1))))
-node_names_sr = best_result.get('node_names_sr', [f'{px}{pm}' for px in pixel_names for pm in ['+','-']])
+num_nodes_dr = best_result.get('num_nodes_dr', num_nodes_dualrail)
+node_names_dr = best_result.get('node_names_dr', list(map(str, range(1, num_nodes_dr+1))))
+
+num_nodes_sr = best_result.get('num_nodes_sr', 2*num_nodes_dr)
+node_names_sr = best_result.get('node_names_sr', [f'{n_dr}{pm}' for n_dr in node_names_dr for pm in ['+','-']])
+dr_to_sr_map = best_result.get('dr_to_sr_map', None)
+
+num_fluors = best_result.get('num_fluorophores', num_nodes_sr)
 fluor_names = best_result.get('fluorophore_names', node_names_sr)
 fluor_types = best_result.get('fluorophore_types', ['C']*num_fluors)
+sr_to_fluor_map = best_result.get('sr_to_fluor_map', None)
+positions = best_result.get('positions', None)
 
 output_best = {
   'index': best_idx,
   'cost': best_cost,
 
-  'num_pixels': num_pixels,
+  'num_nodes_dualrail': num_nodes_dr,
+  'node_names_dualrail': node_names_dr,
+
+  'num_nodes_singlerail': num_nodes_sr,
+  'node_names_singlerail': node_names_sr,
+  'dualrail_to_singlerail_map': dr_to_sr_map,
+
   'num_fluorophores': num_fluors,
-  'pixel_names': pixel_names,
   'fluorophore_names': fluor_names,
   'fluorophore_types': fluor_types,
-  'dr_to_sr_map': dr_to_sr_map,
-  'sr_to_fluor_map': sr_to_fluor_map,
+  'singlerail_to_fluorophore_map': sr_to_fluor_map,
+
+  'positions': positions,
 
   'input_magnitude': input_magnitude,
   'output_magnitude': output_magnitude,
@@ -305,8 +315,9 @@ output_best = {
   'k_in': k_in,
   'k_out': k_out,
   'k_decay': k_decay,
-
-  'positions': positions,
+  'K_in': K_in,
+  'K_out': K_out,
+  'K_quench': K_quench,
 
   'args': best_args,
   'method': best_method,
