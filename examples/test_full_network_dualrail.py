@@ -10,7 +10,7 @@ if pkg_path not in sys.path:
   sys.path.insert(0,pkg_path)
 
 import objects.utils as fretnet_objects
-from analysis.interactive import test_full_dualrail_network
+from analysis.interactive import test_dualrail_network
 
 
 if len(sys.argv) != 2:
@@ -42,14 +42,14 @@ K_fret = data['K_fret']
 K_in = data['K_in']
 K_out = data['K_out']
 K_quench = data['K_quench']
-I_k0 = data['training_metadata']['input_fluor_info'].get('k_0', 1)
-I_kdecay = data['training_metadata']['input_fluor_info'].get('k_decay', 0)
-C_k0 = data['training_metadata']['compute_fluor_info']['k_0']
-C_kdecay = data['training_metadata']['compute_fluor_info'].get('k_decay', 0)
+I_k0 = data['args']['input_fluor_info'].get('k_0', 1)
+I_kdecay = data['args']['input_fluor_info'].get('k_decay', 0)
+C_k0 = data['args']['compute_fluor_info']['k_0']
+C_kdecay = data['args']['compute_fluor_info'].get('k_decay', 0)
 
-network = fretnet_objects.full_HANlike_network_from_rates(K_fret_IC = K_in, K_fret_CC = K_fret, K_fret_CO = K_out, K_fret_CQ = K_quench, I_kin = np.zeros(num_nodes_sr), I_k0 = I_k0, I_kdecay = I_kdecay, C_k0=C_k0, C_kdecay = C_kdecay, node_names = fluorophore_names)
+network = fretnet_objects.full_HANlike_network_from_rates(K_fret_IC = K_in, K_fret_CC = K_fret, K_fret_CO = K_out, K_fret_CQ = K_quench, I_kin = np.zeros(num_nodes_sr), I_k0 = I_k0, I_kdecay = I_kdecay, C_k0=C_k0, C_kdecay = C_kdecay, node_names = node_names_sr)
 
-pixel_to_node_sr_index_map = {pixel_names.index(px): (node_names_sr.index(node_p), node_names_sr.index(node_n)]) for px, (node_p, node_n) in dr_to_sr_map.items()}
+pixel_to_node_sr_index_map = {pixel_names.index(px): (node_names_sr.index(node_p), node_names_sr.index(node_n)) for px, (node_p, node_n) in dr_to_sr_map.items()}
 
 ## Test network using test_dualrail_network function
 plot = test_dualrail_network(

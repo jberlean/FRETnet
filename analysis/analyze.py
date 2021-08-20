@@ -256,6 +256,8 @@ def _probability_by_node_hanlike_full(network):
   """
   input_nodes = network.input_nodes
   compute_nodes = network.compute_nodes
+  output_nodes = network.output_nodes
+  quencher_nodes = network.quencher_nodes
   node_groups = network.node_groups
   num_nodes = len(node_groups)
 
@@ -285,7 +287,13 @@ def _probability_by_node_hanlike_full(network):
 
   # Compute probabilities dictionary
   C_prob = np.linalg.solve(A, C_kin)
-  probs_dict = {ng: p for ng,p in zip(node_groups, C_prob)}
+  O_prob = np.zeros_like(C_prob)
+  Q_prob = np.zeros_like(O_prob)
+  probs_dict = dict(it.chain(
+      zip(input_nodes, I_prob), zip(compute_nodes, C_prob),
+      zip(output_nodes, O_prob), zip(quencher_nodes, Q_prob),
+      zip(node_groups, C_prob)
+  ))
 
   return probs_dict
 
@@ -333,13 +341,31 @@ def _node_outputs_hanlike_full(network):
       Returns:
         outputs (dict): Maps each Node object in the Network to its flux out of the network.
   """
-  nodes = network.node_groups
+  input_nodes = network.input_nodes
+  compute_nodes = network.compute_nodes
+  output_nodes = network.output_nodes
+  quencher_nodes = network.quencher_nodes
+  node_groups = network.node_groups
 
   probs = _probability_by_node_hanlike_full(network)
-  prob_vector = np.array([probs[n] for n in nodes])
-  K_out = network.get_K_fret_CO()
 
-  node_outputs = dict(zip(nodes, prob_vector@K_out))
+  I_prob = np.array([probs[n] for n in input_nodes])
+  C_prob = np.array([probs[n] for n in compute_nodes])
+  K_compute = network.get_K_fret_CC()
+  K_in = network.get_K_fret_IC()
+  K_out = network.get_K_fret_CO()
+  K_quench = network.get_K_fret_CQ()
+
+  I_outputs = I_prob * K_in.sum(axis=1)
+  C_outputs = C_prob * (K_compute.sum(axis=1) + K_out.sum(axis=1) + K_quench.sum(axis=1))
+  O_outputs = C_prob @ K_out
+  Q_outputs = C_prob @ K_quench
+
+  node_outputs = dict(it.chain(
+      zip(input_nodes, I_outputs), zip(compute_nodes, C_outputs),
+      zip(output_nodes, O_outputs), zip(quencher_nodes, Q_outputs),
+      zip(node_groups, O_outputs)
+  ))
   return node_outputs
 
 

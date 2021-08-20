@@ -38,8 +38,8 @@ class Reaction(object):
 class Node(object):
   def __init__(self, name, in_edges = [], out_edges = [], production_rate = 0.0, decay_rate = 0.0, emit_rate = 1.0, status = False):
     self._name = name
-    self._in_edges = list(in_edges)
-    self._out_edges = list(out_edges)
+    self._in_edges = tuple(in_edges)
+    self._out_edges = tuple(out_edges)
 
     self._reactions = None
 
@@ -56,10 +56,10 @@ class Node(object):
 
   @property
   def in_edges(self):
-    return self._in_edges[:]
+    return self._in_edges
   @property
   def out_edges(self):
-    return self._out_edges[:]
+    return self._out_edges
 
   @property
   def production_rate(self):
@@ -98,8 +98,8 @@ class Node(object):
 
   def add_input(self, n, rate):
     e = Edge(n, self, rate)
-    self._in_edges.append(e)
-    n._out_edges.append(e)
+    self._in_edges += (e,)
+    n._out_edges += (e,)
 
   def _make_reaction(self, edge):
     return Reaction('transfer', edge.input, edge.output, edge.rate)
@@ -179,7 +179,7 @@ class Edge(object):
 
 class Network(object):
   def __init__(self, nodes = []):
-    self._nodes = nodes[:]
+    self._nodes = tuple(nodes)
     self._stats = {}
     self._node_stats = {n: {} for n in nodes}
 
@@ -187,25 +187,28 @@ class Network(object):
 
   @property
   def nodes(self):
-    return self._nodes[:]
+    return self._nodes
+  @property
+  def num_nodes(self):
+    return len(self._nodes)
 
   def set_k_in(self, k_in):
     for n,v in zip(self._nodes, k_in):
       n.production_rate = v
   def get_k_in(self):
-    return np.fromiter(n.production_rate for n in self._nodes)
+    return np.fromiter((n.production_rate for n in self._nodes), dtype=np.float)
 
   def set_k_out(self, k_out):
     for n,v in zip(self._nodes, k_out):
       n.emit_rate = v
   def get_k_out(self):
-    return np.fromiter(n.emit_rate for n in self._nodes)
+    return np.fromiter((n.emit_rate for n in self._nodes), dtype=np.float)
 
   def set_k_decay(self, k_decay):
     for n,v in zip(self._nodes, k_decay):
       n.decay_rate = v
   def get_k_decay(self):
-    return np.fromiter(n.decay_rate for n in self._nodes)
+    return np.fromiter((n.decay_rate for n in self._nodes), dtype=np.float)
  
   def get_K_fret(self):
     num_nodes = len(self._nodes)
@@ -282,7 +285,7 @@ class FullHANlikeNetwork(HANlikeNetwork):
       node_group_names = [f'NodeGroup{i}' for i in range(num_node_groups)]
     self._num_node_groups = num_node_groups
     self._node_group_idxs = tuple(zip(self._input_node_idxs, self._compute_node_idxs, self._output_node_idxs, self._quencher_node_idxs))
-    self._node_groups = tuple(tuple(map(self._nodes.__getitem__, idxs) for idxs in self._node_group_idxs)
+    self._node_groups = tuple(tuple(map(self._nodes.__getitem__, idxs)) for idxs in self._node_group_idxs)
     self._node_to_node_group_idx = {n: i for i,ng in enumerate(self._node_groups) for n in ng}
     self._node_group_names = tuple(node_group_names)
 
@@ -326,14 +329,14 @@ class FullHANlikeNetwork(HANlikeNetwork):
     for n,v in zip(self._input_nodes, k_in):
       n.production_rate = v
   def get_k_in(self):
-    return np.fromiter(n.production_rate for n in self._input_nodes)
+    return np.fromiter((n.production_rate for n in self._input_nodes),dtype=np.float)
 
   def set_k_out(self, k_out):
     raise ValueError('Cannot directly set k_out for full HAN-like FRETnets')
   def get_k_out(self):
     k_out = np.fromiter(
-        sum(e.rate for e in n.out_edges if e.output==o) for n,o in zip(self._compute_nodes, self._output_nodes)
-    )
+        (sum(e.rate for e in n.out_edges if e.output==o) for n,o in zip(self._compute_nodes, self._output_nodes))
+    , dtype = np.float)
     return k_out
 
   def set_k_decay(self, k_decay):
@@ -342,11 +345,11 @@ class FullHANlikeNetwork(HANlikeNetwork):
     compute_nodes = self._compute_nodes
     off_nodes = set(self._output_nodes) | set(self._quencher_nodes)
     k_decay = np.fromiter(
-        sum(e.rate for e in n.out_edges if e.output in off_nodes)+n.emit_rate+n.decay_rate for n in self._compute_nodes)
-    ) - self.get_k_out()
+        (sum(e.rate for e in n.out_edges if e.output in off_nodes)+n.emit_rate+n.decay_rate for n in self._compute_nodes)
+    , dtype = np.float) - self.get_k_out()
     return k_decay
   def get_k_decay_intrinsic(self):
-    return np.fromiter(n.emit_rate + n.decay_rate for n in self._nodes)
+    return np.fromiter((n.emit_rate + n.decay_rate for n in self._nodes), dtype = np.float)
  
   def _get_K_fret_nodesubset(self, donor_nodes, acceptor_nodes):
     D_num_nodes = len(donor_nodes)
@@ -378,10 +381,10 @@ class FullHANlikeNetwork(HANlikeNetwork):
 
   def get_K_fret(self):
     Kfret = np.zeros((self.num_nodes, self.num_nodes))
-    Kfret[self._input_node_idxs, self._compute_node_idxs] = self.get_K_fret_IC()
-    Kfret[self._compute_node_idxs, self._compute_node_idxs] = self.get_K_fret_CC()
-    Kfret[self._compute_node_idxs, self._output_node_idxs] = self.get_K_fret_CO()
-    Kfret[self._compute_node_idxs, self._quencher_node_idxs] = self.get_K_fret_CQ()
+    Kfret[np.ix_(self._input_node_idxs, self._compute_node_idxs)] = self.get_K_fret_IC()
+    Kfret[np.ix_(self._compute_node_idxs, self._compute_node_idxs)] = self.get_K_fret_CC()
+    Kfret[np.ix_(self._compute_node_idxs, self._output_node_idxs)] = self.get_K_fret_CO()
+    Kfret[np.ix_(self._compute_node_idxs, self._quencher_node_idxs)] = self.get_K_fret_CQ()
     return Kfret
 
 ######
