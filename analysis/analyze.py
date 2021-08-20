@@ -136,7 +136,7 @@ def probability_by_network_state(network, eps = 10**-10):
 
   output = {}
   for state in it.product([0,1], repeat=num_nodes):
-    output[state] = prob_ss[state_to_idx(state)]
+    output[state] = prob_ss[state_to_idx(state)].item()
 
   return output
 
@@ -177,28 +177,10 @@ def node_fluxes(network, hanlike=None):
   """
   if hanlike is None:  hanlike = isinstance(network, objects.HANlikeNetwork)
 
-  nodes = network.nodes
-  num_nodes = len(nodes)
-  node_idxs = {n:i for i,n in enumerate(nodes)}
-
-  state_probs = probability_by_network_state(network)
-  
-  output = {n: 0 for n in nodes}
-  for node_idx, node in enumerate(nodes):
-    flux = 0
-    for state in state_probs:
-      if state[node_idx] == 0:  continue
-
-      flux += state_probs[state]*(node.emit_rate+node.decay_rate)
-
-      for e in node.out_edges:
-        out_node_idx = node_idxs[e.output]   
-        if state[out_node_idx] == 0:
-          flux += state_probs[state]*e.rate
-
-    output[node] = flux
-
-  return output
+  if hanlike:
+    return _node_fluxes_hanlike(network)
+  else:
+    return _node_fluxes_general(network)
 
 
 ## Auxiliary functions, shouldn't need to be called from outside this module
@@ -375,5 +357,66 @@ def _node_outputs_general(network):
 
   node_outputs = {node:node_probs[node]*(node.emit_rate) for node in nodes}
   return node_outputs
+
+
+def _node_fluxes_hanlike(network):
+  nodes = network.nodes
+  num_nodes = len(nodes)
+
+  node_probs = _probability_by_node_hanlike(network)
+  K_fret = network.get_K_fret()
+
+  pairs = list(it.combinations(range(num_nodes), 2))
+  pair_to_idx = {p:i for i,(j,k) in enumerate(pairs) for p in [(j,k),(k,j)]}
+  num_pairs = len(pairs)
+
+  B = np.zeros((num_pairs, num_pairs))
+  c = np.zeros(num_pairs)
+  for pair_idx, (i,j) in enumerate(pairs):
+    n_i, n_j = nodes[i], nodes[j]
+
+    c[pair_idx] = n_i.production_rate*node_probs[n_j] + n_j.production_rate*node_probs[n_i]
+
+    B[pair_idx, pair_idx] -= n_i.production_rate + n_i.emit_rate + n_i.decay_rate \
+        + n_j.production_rate + n_j.emit_rate + n_j.decay_rate
+    for k in range(num_nodes):
+      if k==i or k==j:  continue
+      B[pair_idx, pair_to_idx[(j,k)]] = K_fret[k,i]
+      B[pair_idx, pair_to_idx[(i,k)]] = K_fret[k,j]
+      B[pair_idx, pair_idx] -= K_fret[i,k] + K_fret[j,k]
+
+  pair_probs = np.linalg.solve(B, -c)
+
+  fluxes = np.array([node_probs[n]*(n.emit_rate+n.decay_rate) for n in nodes])
+  for (i,j), prob in zip(pairs, pair_probs):
+    n_i,n_j = nodes[i], nodes[j]
+    fluxes[i] += (node_probs[n_i] - prob)*K_fret[i,j]
+    fluxes[j] += (node_probs[n_j] - prob)*K_fret[j,i]
+  
+  return dict(zip(nodes, fluxes))
+  
+def _node_fluxes_general(network):
+  nodes = network.nodes
+  num_nodes = len(nodes)
+  node_idxs = {n:i for i,n in enumerate(nodes)}
+
+  state_probs = probability_by_network_state(network)
+  
+  output = {n: 0 for n in nodes}
+  for node_idx, node in enumerate(nodes):
+    flux = 0
+    for state in state_probs:
+      if state[node_idx] == 0:  continue
+
+      flux += state_probs[state]*(node.emit_rate+node.decay_rate)
+
+      for e in node.out_edges:
+        out_node_idx = node_idxs[e.output]   
+        if state[out_node_idx] == 0:
+          flux += state_probs[state]*e.rate
+
+    output[node] = flux
+
+  return output
 
 
