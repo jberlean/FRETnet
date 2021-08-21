@@ -163,11 +163,9 @@ def node_outputs(network, hanlike=None, full=None):
   else:
     return _node_outputs_general(network)
 
-def node_fluxes(network, hanlike=None):
+def node_fluxes(network, hanlike=None, full=None):
   """ Computes the total flux out of each node, combining flux due to FRET as well as emission/decay. This
       should be equal to the flux into each node.
-      TODO: Optimize computation in the case of HAN-like networks, where we can avoid computing explicitly the
-      probability of each network state.
 
       Arguments:
         network (objects.utils.Network): The Network object to be analyzed.
@@ -176,8 +174,11 @@ def node_fluxes(network, hanlike=None):
         fluxes (dict): Maps each Node object in the Network to its total flux within and out of the network
   """
   if hanlike is None:  hanlike = isinstance(network, objects.HANlikeNetwork)
+  if full is None: full = isinstance(network, objects.FullHANlikeNetwork)
 
-  if hanlike:
+  if hanlike and full:
+    return _node_fluxes_hanlike_full(network)
+  elif hanlike:
     return _node_fluxes_hanlike(network)
   else:
     return _node_fluxes_general(network)
@@ -242,8 +243,6 @@ def _probability_by_node_hanlike_full(network):
   quencher_nodes = network.quencher_nodes
   node_groups = network.node_groups
   num_nodes = len(node_groups)
-
-  compute_node_idxs = dict(enumerate(compute_nodes))
 
   # Get relevant FRET matrices
   K_fret_IC = network.get_K_fret_IC()
@@ -395,6 +394,69 @@ def _node_fluxes_hanlike(network):
   
   return dict(zip(nodes, fluxes))
   
+def _node_fluxes_hanlike_full(network):
+  input_nodes = network.input_nodes
+  compute_nodes = network.compute_nodes
+  output_nodes = network.output_nodes
+  quencher_nodes = network.quencher_nodes
+  num_node_groups = len(compute_nodes)
+
+  # Get relevant FRET matrices
+  K_fret_IC = network.get_K_fret_IC()
+  K_fret_CC = network.get_K_fret_CC()
+  K_fret_CO = network.get_K_fret_CO()
+  K_fret_CQ = network.get_K_fret_CQ()
+
+  node_probs = _probability_by_node_hanlike_full(network)
+  I_prob = np.array([node_probs[n] for n in input_nodes])
+  C_prob = np.array([node_probs[n] for n in compute_nodes])
+  O_prob = np.array([node_probs[n] for n in output_nodes])
+  Q_prob = np.array([node_probs[n] for n in quencher_nodes])
+
+  # Estimate effective k_in, k_out, and k_decay for each compute fluorophore
+  C_kin = I_prob @ K_fret_IC
+  C_kout = network.get_k_out()
+  C_kdecay = network.get_k_decay()
+
+  # Enumerate pairs in order corresponding to matrix of transition rates
+  pairs = list(it.combinations(range(num_node_groups), 2))
+  pair_to_idx = {p:i for i,(j,k) in enumerate(pairs) for p in [(j,k),(k,j)]}
+  num_pairs = len(pairs)
+
+  # Construct rate matrix/vector for linear system of equations
+  B = np.zeros((num_pairs, num_pairs))
+  c = np.zeros(num_pairs)
+  for pair_idx, (i,j) in enumerate(pairs):
+    c[pair_idx] = C_kin[i]*C_prob[j] + C_kin[j]*C_prob[i]
+
+    B[pair_idx, pair_idx] -= C_kin[i] + C_kout[i] + C_kdecay[i] + C_kin[j] + C_kout[j] + C_kdecay[j]
+    for k in range(num_node_groups):
+      if k==i or k==j:  continue
+      B[pair_idx, pair_to_idx[(j,k)]] = K_fret_CC[k,i]
+      B[pair_idx, pair_to_idx[(i,k)]] = K_fret_CC[k,j]
+      B[pair_idx, pair_idx] -= K_fret_CC[i,k] + K_fret_CC[j,k]
+
+  # Solve linear system of equations
+  pair_probs = np.linalg.solve(B, -c)
+
+  # Compute fluxes
+  C_fluxes = C_prob * (C_kout+C_kdecay)
+  for (i,j), prob in zip(pairs, pair_probs):
+    C_fluxes[i] += (C_prob[i] - prob)*K_fret_CC[i,j]
+    C_fluxes[j] += (C_prob[j] - prob)*K_fret_CC[j,i]
+
+  I_fluxes = I_prob * (K_fret_IC @ (1-C_prob))  # approximate, doesn't account for correlation between I/C/O/Q states
+  O_fluxes = (1-O_prob) * (C_prob @ K_fret_CO)
+  Q_fluxes = (1-Q_prob) * (C_prob @ K_fret_CQ)
+
+  flux_dict = dict(it.chain(
+      zip(input_nodes, I_fluxes), zip(compute_nodes, C_fluxes),
+      zip(output_nodes, O_fluxes), zip(quencher_nodes, Q_fluxes)
+  ))
+ 
+  return flux_dict
+   
+
 def _node_fluxes_general(network):
   nodes = network.nodes
   num_nodes = len(nodes)

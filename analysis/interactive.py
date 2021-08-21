@@ -46,7 +46,8 @@ class DualRailNetworkPlot(object):
     self._node_names = tuple(n.name for n in self._nodes)
 
     # Single-rail node (for full networks, these are node groups; otherwise these are simply nodes) level properties
-    if isinstance(network, objects.FullHANlikeNetwork):
+    self._is_full_network = isinstance(network, objects.FullHANlikeNetwork)
+    if self._is_full_network:
       self._nodes_sr = self._network.node_groups
       self._node_names_sr = self._network.node_group_names
       self._input_nodes = self._network.input_nodes
@@ -86,9 +87,11 @@ class DualRailNetworkPlot(object):
 
     self._network_nx, self._network_nx_node_pos = self._init_network_nx(self._network)
     self._network_nx_node_pos = self._calc_network_node_pos_spring()
+    self._network_activation_mode = 'output' if not self._is_full_network else 'flux'
 
     # network inputs/outputs
     self._network_input = np.zeros(len(self._nodes))
+    self._network_flux = None
     self._network_output = None
     self._image_input = np.zeros(len(self._pixels))
     self._image_output = None
@@ -264,8 +267,11 @@ class DualRailNetworkPlot(object):
     # Use analysis module to compute network output
     node_outputs = analyze.node_outputs(self._network)
     self._network_output = [node_outputs[n] for n in self._nodes]
-    print(self._network_output)
-    print(node_outputs)
+
+    if self._network_activation_mode == 'flux':
+      node_fluxes = analyze.node_fluxes(self._network)
+      self._network_flux = [node_fluxes[n] for n in self._nodes]
+      print(self._network_flux)
 
     self._image_output = [0]*self.num_pixels
     for px_idx, px in enumerate(self._pixels):
@@ -329,11 +335,18 @@ class DualRailNetworkPlot(object):
     else:
       print(f'WARNING: Unknown plot mode {mode}')
 
+  def set_network_activation_mode(self, mode = 'output'):
+    self._network_activation_mode = mode
+    self.update_plot()
+
   def set_image_plot_mode(self, mode = 'threshold'):
     self._image_plot_mode = mode
     self.update_plot()
 
   def _collect_plot_data(self):
+    if self._network_output is None or self._image_output is None:
+      self._compute_network_output()
+
     nr,nc = self.image_rows, self.image_cols
 
     vals_img_in = list(map(self.pixel_input, self._pixels))
@@ -346,7 +359,10 @@ class DualRailNetworkPlot(object):
     for n,v in zip(self._input_nodes, map(self.node_input, self._nodes_sr)):
       vals_net_in[self._node_idx(n)] = v
 
-    vals_net_out = np.array(self._network_output)
+    if self._network_activation_mode == 'flux':
+      vals_net_out = np.array(self._network_flux)
+    else:
+      vals_net_out = np.array(self._network_output)
 
     return mat_img_in, mat_img_out, vals_net_in, vals_net_out
 
