@@ -183,6 +183,17 @@ def node_fluxes(network, hanlike=None, full=None):
   else:
     return _node_fluxes_general(network)
 
+def node_fluxes_detailed(network, hanlike = None, full = None):
+  if hanlike is None:  hanlike = isinstance(network, objects.HANlikeNetwork)
+  if full is None: full = isinstance(network, objects.FullHANlikeNetwork)
+
+  if hanlike and full:
+    return _node_fluxes_detailed_hanlike_full(network)
+  elif hanlike:
+    raise _node_fluxes_detailed_hanlike(network)
+  else:
+    raise NotImplementedError('Detailed flux calculations not implemented for general FRETnets')
+
 
 ## Auxiliary functions, shouldn't need to be called from outside this module
 def _probability_by_node_hanlike(network):
@@ -337,8 +348,8 @@ def _node_outputs_hanlike_full(network):
   K_out = network.get_K_fret_CO()
   K_quench = network.get_K_fret_CQ()
 
-  I_outputs = I_prob * K_in.sum(axis=1)
-  C_outputs = C_prob * (K_compute.sum(axis=1) + K_out.sum(axis=1) + K_quench.sum(axis=1))
+  I_outputs = I_prob * np.array([n.emit_rate for n in input_nodes])
+  C_outputs = C_prob * np.array([n.emit_rate for n in compute_nodes])
   O_outputs = C_prob @ K_out
   Q_outputs = C_prob @ K_quench
 
@@ -357,8 +368,7 @@ def _node_outputs_general(network):
   node_outputs = {node:node_probs[node]*(node.emit_rate) for node in nodes}
   return node_outputs
 
-
-def _node_fluxes_hanlike(network):
+def _node_pair_probs_hanlike(network):
   nodes = network.nodes
   num_nodes = len(nodes)
 
@@ -386,32 +396,55 @@ def _node_fluxes_hanlike(network):
 
   pair_probs = np.linalg.solve(B, -c)
 
+  return {(nodes[i], nodes[j]): p for (i,j),p in zip(pairs, pair_probs)}
+
+
+def _node_fluxes_hanlike(network):
+  nodes = network.nodes
+  num_nodes = len(nodes)
+
+  node_probs = _probability_by_node_hanlike(network)
+  K_fret = network.get_K_fret()
+
+  pair_probs = _node_pair_probs_hanlike(network)
+
   fluxes = np.array([node_probs[n]*(n.emit_rate+n.decay_rate) for n in nodes])
-  for (i,j), prob in zip(pairs, pair_probs):
+  for (i,j), prob in pair_probs.items():
     n_i,n_j = nodes[i], nodes[j]
     fluxes[i] += (node_probs[n_i] - prob)*K_fret[i,j]
     fluxes[j] += (node_probs[n_j] - prob)*K_fret[j,i]
   
   return dict(zip(nodes, fluxes))
+
+def _node_fluxes_detailed_hanlike(network):
+  nodes = network.nodes
+  num_nodes = len(nodes)
+
+  node_probs = _probability_by_node_hanlike(network)
+  K_fret = network.get_K_fret()
+
+  pair_probs = _node_pair_probs_hanlike(network)
+
+  pair_fluxes = {}
+  for (i,j), prob in pair_probs.items():
+    n_i,n_j = nodes[i], nodes[j]
+    pair_fluxes[(n_i,n_j)] = (node_probs[n_i] - prob) * K_fret[i,j]
+    pair_fluxes[(n_j,n_i)] = (node_probs[n_j] - prob) * K_fret[j,i]
   
-def _node_fluxes_hanlike_full(network):
+  return pair_fluxes
+
+def _node_pair_probs_hanlike_full(network):
   input_nodes = network.input_nodes
   compute_nodes = network.compute_nodes
-  output_nodes = network.output_nodes
-  quencher_nodes = network.quencher_nodes
   num_node_groups = len(compute_nodes)
 
   # Get relevant FRET matrices
   K_fret_IC = network.get_K_fret_IC()
   K_fret_CC = network.get_K_fret_CC()
-  K_fret_CO = network.get_K_fret_CO()
-  K_fret_CQ = network.get_K_fret_CQ()
 
   node_probs = _probability_by_node_hanlike_full(network)
   I_prob = np.array([node_probs[n] for n in input_nodes])
   C_prob = np.array([node_probs[n] for n in compute_nodes])
-  O_prob = np.array([node_probs[n] for n in output_nodes])
-  Q_prob = np.array([node_probs[n] for n in quencher_nodes])
 
   # Estimate effective k_in, k_out, and k_decay for each compute fluorophore
   C_kin = I_prob @ K_fret_IC
@@ -439,23 +472,87 @@ def _node_fluxes_hanlike_full(network):
   # Solve linear system of equations
   pair_probs = np.linalg.solve(B, -c)
 
-  # Compute fluxes
-  C_fluxes = C_prob * (C_kout+C_kdecay)
-  for (i,j), prob in zip(pairs, pair_probs):
-    C_fluxes[i] += (C_prob[i] - prob)*K_fret_CC[i,j]
-    C_fluxes[j] += (C_prob[j] - prob)*K_fret_CC[j,i]
+  node_pair_probs = {(compute_nodes[i], compute_nodes[j]): p for (i,j),p in zip(pairs, pair_probs)}
 
-  I_fluxes = I_prob * (K_fret_IC @ (1-C_prob))  # approximate, doesn't account for correlation between I/C/O/Q states
-  O_fluxes = (1-O_prob) * (C_prob @ K_fret_CO)
-  Q_fluxes = (1-Q_prob) * (C_prob @ K_fret_CQ)
+  return node_pair_probs
 
-  flux_dict = dict(it.chain(
-      zip(input_nodes, I_fluxes), zip(compute_nodes, C_fluxes),
-      zip(output_nodes, O_fluxes), zip(quencher_nodes, Q_fluxes)
-  ))
+
+  
+def _node_fluxes_hanlike_full(network):
+  nodes = network.nodes
+  input_nodes = network.input_nodes
+  compute_nodes = network.compute_nodes
+  output_nodes = network.output_nodes
+  quencher_nodes = network.quencher_nodes
+  num_node_groups = len(compute_nodes)
+
+  node_probs = _probability_by_node_hanlike_full(network)
+  flux_detailed = _node_fluxes_detailed_hanlike_full(network)
+  
+  fluxes_out = {n: node_probs[n] * (n.emit_rate+n.decay_rate) for n in nodes}
+  fluxes_in = {n: (1-node_probs[n]) * (n.production_rate) for n in nodes}
+  for (n_i, n_j), f in flux_detailed.items():
+    fluxes_out[n_i] += f
+    fluxes_in[n_j] += f
+
+  fluxes = {}
+  for n in nodes:
+    if node_probs[n] == 0:  fluxes[n] = fluxes_in[n]
+    if node_probs[n] == 1:  fluxes[n] = fluxes_out[n]
+    else:
+      if (fluxes_in[n] != fluxes_out[n]):
+        print(f'Warning: Fluxes into and out of node {n} are not equal ({fluxes_in[n]} vs {fluxes_out[n]}')
+      fluxes[n] = max(fluxes_in[n], fluxes_out[n])
  
-  return flux_dict
+  return fluxes
    
+def _node_fluxes_detailed_hanlike_full(network):
+  input_nodes = network.input_nodes
+  compute_nodes = network.compute_nodes
+  output_nodes = network.output_nodes
+  quencher_nodes = network.quencher_nodes
+  num_node_groups = len(compute_nodes)
+
+  # Get relevant FRET matrices
+  K_fret_IC = network.get_K_fret_IC()
+  K_fret_CC = network.get_K_fret_CC()
+  K_fret_CO = network.get_K_fret_CO()
+  K_fret_CQ = network.get_K_fret_CQ()
+
+  node_probs = _probability_by_node_hanlike_full(network)
+  I_prob = np.array([node_probs[n] for n in input_nodes])
+  C_prob = np.array([node_probs[n] for n in compute_nodes])
+  O_prob = np.array([node_probs[n] for n in output_nodes])
+  Q_prob = np.array([node_probs[n] for n in quencher_nodes])
+
+  # Estimate effective k_in, k_out, and k_decay for each compute fluorophore
+  C_kin = I_prob @ K_fret_IC
+  C_kout = network.get_k_out()
+  C_kdecay = network.get_k_decay()
+
+  pair_probs = _node_pair_probs_hanlike_full(network)
+
+  C_node_idxs = {n:i for i,n in enumerate(compute_nodes)}
+
+  fluxes_CC = {
+      (i, j): (C_prob[C_node_idxs[i]] - p)*K_fret_CC[C_node_idxs[i],C_node_idxs[j]]
+      for (a,b), p in pair_probs.items() for i,j in [(a,b), (b,a)]
+  }
+  fluxes_IC = {
+      (input_nodes[i], compute_nodes[j]): I_prob[i] * (1-C_prob[j]) * K_fret_IC[i,j]
+      for i,j in it.product(range(num_node_groups), repeat=2)
+  }
+  fluxes_CO = {
+      (compute_nodes[i], output_nodes[j]): C_prob[i] * (1-O_prob[j]) * K_fret_CO[i,j]
+      for i,j in it.product(range(num_node_groups), repeat=2)
+  }
+  fluxes_CQ = {
+      (compute_nodes[i], quencher_nodes[j]): C_prob[i] * (1-Q_prob[j]) * K_fret_CQ[i,j]
+      for i,j in it.product(range(num_node_groups), repeat=2)
+  }
+
+  return {**fluxes_CC, **fluxes_IC, **fluxes_CO, **fluxes_CQ}
+
 
 def _node_fluxes_general(network):
   nodes = network.nodes

@@ -83,11 +83,12 @@ class DualRailNetworkPlot(object):
     self._ax_img_in, self._ax_img_out = None, None
     self._ax_img_in_cbar, self._ax_img_out_cbar = None, None
     self._ax_net_in, self._ax_net_out = None, None
+    self._ax_net_in_cbar, self._ax_net_out_cbar = None, None
     self._image_plot_mode = 'continuous'
 
     self._network_nx, self._network_nx_node_pos = self._init_network_nx(self._network)
     self._network_nx_node_pos = self._calc_network_node_pos_spring()
-    self._network_activation_mode = 'output' if not self._is_full_network else 'flux'
+    self._network_activation_mode = 'output'
 
     # network inputs/outputs
     self._network_input = np.zeros(len(self._nodes))
@@ -124,45 +125,21 @@ class DualRailNetworkPlot(object):
     network_nx = nx.Graph()
     network_nx.add_nodes_from(node_names)
 
-    kfret_matrix = network.get_K_fret()
-    koff = np.array([n.decay_rate + n.emit_rate for n in network.nodes])
-    koff += 1*(koff == 0)
+    network.set_k_in(np.ones(network.num_node_groups))
 
-    edges = []
-    weights = []
+    K_fret = network.get_K_fret()
+    kout = np.array([n.emit_rate for n in network.nodes])
+    kout[kout == 0] = 1
+
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
-      ka1, ka2 = koff[i1] + kfret_matrix[i1,:].sum(), koff[i2] + kfret_matrix[i2,:].sum()
-      kf1, kf2 = kfret_matrix[i1,i2], kfret_matrix[i2,i1]
-      if kf1 > 0 and kf2 > 0:  w = max(kf1/ka1, kf2/ka2)
-      elif kf1 > 0:           w = kf1/ka1
-      elif kf2 > 0:           w = kf2/ka2
+      ko1, ko2 = kout[i1], kout[i2]
+      kf1, kf2 = K_fret[i1,i2], K_fret[i2,i1]
+      if kf1 > 0 and kf2 > 0:  w = (max(kf1/ko1, kf2/ko2))**(1/6)
+      elif kf1 > 0:           w = (kf1/ko1)**(1/6)
+      elif kf2 > 0:           w = (kf2/ko2)**(1/6)
       else:                   continue
-      
-#      ko1, ko2 = koff[i1], koff[i2]
-#      kf1, kf2 = kfret_matrix[i1,i2], kfret_matrix[i2,i1]
-#      if kf1 == 0:  continue
-#      w = 4*max(kf1/(ko1+kf1), kf2/(ko2+kf2))
 
-      weights.append(w)
-      network_nx.add_edge(node_names[i1], node_names[i2], weight=w)
-
-    weights = np.array(weights)
-    spring_weight_threshold = .01#sorted(weights)[-num_nodes]  # heuristic that the top 25% weights should be dominant
-#    spring_weights = 1*(weights >= spring_weight_threshold)  + .02*(weights <spring_weight_threshold)
-    spring_weights = scipy.special.expit(200*(weights - spring_weight_threshold))
-    nx.set_edge_attributes(network_nx, dict(zip(network_nx.edges, spring_weights)), 'spring_weight')
-    nx.set_edge_attributes(network_nx, dict(zip(network_nx.edges, 3*(spring_weights * (spring_weights>.3)))), 'weight')
-
-    for w, (n1,n2) in sorted(zip(weights, network_nx.edges)):
-      print(n1,n2, w)
-    print(spring_weight_threshold)
-    print(sorted(spring_weights))
-
-    plt.figure()
-    plt.hist(weights, bins = np.logspace(np.log(min(weights)), np.log(max(weights)), 20))
-    plt.xscale('log')
-    plt.figure()
-    plt.hist(spring_weights)
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=2*(w**3*(w<1) + w*(w>=1)), spring_weight=w)
 
     node_angles = [np.pi-i/(num_nodes) for i in range(num_nodes)]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(node_names, node_angles)}
@@ -268,11 +245,6 @@ class DualRailNetworkPlot(object):
     node_outputs = analyze.node_outputs(self._network)
     self._network_output = [node_outputs[n] for n in self._nodes]
 
-    if self._network_activation_mode == 'flux':
-      node_fluxes = analyze.node_fluxes(self._network)
-      self._network_flux = [node_fluxes[n] for n in self._nodes]
-      print(self._network_flux)
-
     self._image_output = [0]*self.num_pixels
     for px_idx, px in enumerate(self._pixels):
       nodep_sr, noden_sr = self._pixel_to_node_sr_map[px]
@@ -318,8 +290,8 @@ class DualRailNetworkPlot(object):
     self._ax_img_out_cbar = self._draw_image(mat_img_out, self._ax_img_out, self._ax_img_out_cbar)
 
     # Plot input and ouptut networks
-    self._draw_network(vals_net_in/self.input_magnitude, self._ax_net_in)
-    self._draw_network(vals_net_out/self.output_magnitude, self._ax_net_out)
+    self._ax_net_in_cbar = self._draw_network(vals_net_in/self.input_magnitude, self._ax_net_in, self._ax_net_in_cbar)
+    self._ax_net_out_cbar = self._draw_network(vals_net_out/self.output_magnitude, self._ax_net_out, self._ax_net_out_cbar)
 
     # Update figure
     self._figure.canvas.draw()
@@ -359,10 +331,7 @@ class DualRailNetworkPlot(object):
     for n,v in zip(self._input_nodes, map(self.node_input, self._nodes_sr)):
       vals_net_in[self._node_idx(n)] = v
 
-    if self._network_activation_mode == 'flux':
-      vals_net_out = np.array(self._network_flux)
-    else:
-      vals_net_out = np.array(self._network_output)
+    vals_net_out = np.array(self._network_output)
 
     return mat_img_in, mat_img_out, vals_net_in, vals_net_out
 
@@ -374,25 +343,39 @@ class DualRailNetworkPlot(object):
       cmap = cm.gray_r
     return cmap
 
+     
   def _draw_image(self, img_data, ax, ax_cbar = None):
-    if ax_cbar is not None:  ax_cbar.remove()
-
     ax.clear()
     mappable = ax.matshow(img_data, vmin = -1, vmax = 1, cmap = self._image_plot_cmap())
     ax.set_xticks(np.arange(self.image_cols))
     ax.set_yticks(np.arange(self.image_rows))
-    ax_cbar_new = self._figure.colorbar(mappable, ax=ax)
 
-    return ax_cbar_new
+    if ax_cbar is None:
+      ax_cbar = self._figure.colorbar(mappable, ax=ax)
+    else:
+      ax_cbar.update_normal(mappable)
 
-  def _draw_network(self, node_values, ax):
-    node_colors = [[1-max(min(v,1),0)]*3 for v in node_values]
+    return ax_cbar
+
+  def _draw_network(self, node_values, ax, ax_cbar = None):
+    vmin, vmax = 0.0, max(node_values)
+    vmax = vmax if vmax > 0 else 1
+    norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax, clip=True)
+    mappable = cm.ScalarMappable(norm = norm, cmap=cm.gray_r)
+
+    node_colors = [[1 - norm(np.where(v<vmin, vmin, v))]*3 for v in node_values]
 
     _,_,edge_weights = zip(*self._network_nx.edges.data('weight'))
-#    edge_weights = 4*np.array(edge_weights)
 
     ax.clear()
     nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, font_color=(.5,.5,.5), font_weight='bold', edgecolors='k', width=edge_weights, font_size = 6)
+
+    if ax_cbar is None:
+      ax_cbar = self._figure.colorbar(mappable, ax=ax)
+    else:
+      ax_cbar.update_normal(mappable)
+
+    return ax_cbar
 
 
 ##################################
