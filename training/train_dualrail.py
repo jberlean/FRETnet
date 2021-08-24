@@ -248,11 +248,12 @@ def calc_real_network_output_dr(input_pattern, K_fret_CC, K_fret_IC, K_fret_CO, 
 # TRAINING #
 ############
     
-def generate_training_data(stored_data, noise=.1, duplication=10, mode = 'flip', rng = None):
+def generate_training_data(stored_data, noise=.1, duplication=10, mode = 'flip', filter_zero = False, rng = None):
     train_data = [
         (input_data, output_data)
             for output_data in stored_data 
             for input_data in off_patterns(output_data, noise, duplication, mode, rng = rng)
+            if not filter_zero or np.any(input_data != 0)
     ]
 
     return train_data
@@ -789,6 +790,20 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
             init_pos[idx_lst[node_idx], :] = rng.uniform(min_position, max_position, (dims,))
       return init_pos
 
+    def positions_from_params(params):
+      pos = params.copy()
+      C_pos = params[C_idxs,:]
+      pos[I_idxs,:] += C_pos
+      pos[O_idxs,:] += C_pos
+      pos[Q_idxs,:] += C_pos
+      return pos
+    def params_from_positions(pos):
+      params = pos.copy()
+      C_pos = params[C_idxs,:]
+      params[I_idxs,:] -= C_pos
+      params[O_idxs,:] -= C_pos
+      params[Q_idxs,:] -= C_pos
+      return params
     def rates_from_positions(pos):
         # compute FRET rate constants between relevant fluorophore pairs
         K_fret_IC = np.array([
@@ -867,21 +882,6 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
           for output_data, ((input_data,output_data_cor),multiplicity) in zip(output_data_all, train_data_opt):
             print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), multiplicity)
 
-#        resid = np.array([
-#            loss.fn(
-#                calc_network_output_dr(
-#                    input_data,
-#                    rate_matrix_sr = K_fret_CC,
-#                    output_rates_sr = k_out,
-#                    decay_rates_sr = k_decay,
-#                    input_magnitude = input_magnitude * k_in / (k_in + input_magnitude),
-#                    output_magnitude = output_magnitude,
-#                )[0],
-#                output_data_cor
-#            )**2 * multiplicity
-#            for (input_data,output_data_cor),multiplicity in train_data_opt
-#        ]).sum()
-
         return resid
 
     rng = np.random.default_rng(seed)
@@ -908,18 +908,12 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
     O_idxs = list(range(2*num_nodes_sr, 3*num_nodes_sr))
     Q_idxs = list(range(3*num_nodes_sr, 4*num_nodes_sr))
 
-    max_dist_matrix = np.inf * np.ones((num_fluorophores, num_fluorophores))
-    for node_idx in range(num_nodes_sr):
-      max_dist_matrix[C_idxs[node_idx], I_idxs[node_idx]] = max_dist_CI
-      max_dist_matrix[I_idxs[node_idx], C_idxs[node_idx]] = max_dist_CI
-      max_dist_matrix[C_idxs[node_idx], O_idxs[node_idx]] = max_dist_CO
-      max_dist_matrix[O_idxs[node_idx], C_idxs[node_idx]] = max_dist_CO
-      max_dist_matrix[C_idxs[node_idx], Q_idxs[node_idx]] = max_dist_CQ
-      max_dist_matrix[Q_idxs[node_idx], C_idxs[node_idx]] = max_dist_CQ
+    I_idx_set, C_idx_set, O_idx_set, Q_idx_set = map(set, [I_idxs, C_idxs, O_idxs, Q_idxs])
 
     if init_positions is None:  init_positions = initialize_positions()
+    init_params = params_from_positions(init_positions)
 
-    positions_cur = init_positions
+    params_cur = init_params
     f_cur = np.inf#loss_func(positions_cur)
 
     accept_hist_len = 50
@@ -935,20 +929,40 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
     for i, T in temps_iter:
       steps_mag = rng.normal(0, step_size, num_fluorophores)
       steps = np.array([random_point_on_sphere(step_mag, dims=dims, rng=rng) for step_mag in steps_mag])
-      for fluor_idx in range(num_fluorophores):
-        pos_cur = positions_cur[fluor_idx,:]
-        pos_new = pos_cur + steps[fluor_idx,:]
+      for nodegroup_idx, fluor_idx in it.chain(*map(enumerate, [I_idxs, C_idxs, O_idxs, Q_idxs])):
+        param_cur = params_cur[fluor_idx,:]
+        param_new = param_cur + steps[fluor_idx,:]
 
-        positions_new = positions_cur.copy()
-        positions_new[fluor_idx,:] = pos_new
+        params_new = params_cur.copy()
+        params_new[fluor_idx,:] = param_new
 
-        dists_new = np.linalg.norm(pos_new.reshape((1,dims)) - positions_new, axis=1)
+        positions_new = positions_from_params(params_new)
+        pos_new = positions_new[fluor_idx,:]
 
-        if np.any(pos_new > max_position) or np.any(pos_new < min_position): # throw out any moves outside the bounding box
+        f_new = None
+        
+        param_new_norm = np.linalg.norm(param_new)
+        if fluor_idx in I_idx_set and param_new_norm > max_dist_CI \
+            or fluor_idx in O_idx_set and param_new_norm > max_dist_CO \
+            or fluor_idx in Q_idx_set and param_new_norm > max_dist_CQ:
+          # reject move if it brings an I/O/Q fluor too far from its C fluor
           f_new = np.inf
-        elif (dists_new < min_dist).sum() > 1 or np.any(dists_new > max_dist_matrix[fluor_idx,:]): # throw out the move if two fluors are now closer than the minimum distance or if two fluors are too far apart based on max_dist_matrix
-          f_new = np.inf
+          fluors_mod = []
+        elif fluor_idx in C_idx_set:
+          fluors_mod = [I_idxs[nodegroup_idx], C_idxs[nodegroup_idx], O_idxs[nodegroup_idx], Q_idxs[nodegroup_idx]]
         else:
+          fluors_mod = [fluor_idx]
+
+        for f_idx in fluors_mod:
+          pos_new = positions_new[f_idx,:]
+          if np.any(pos_new > max_position) or np.any(pos_new < min_position):
+            # reject moves outside the bounding box
+            f_new = np.inf
+          elif (np.linalg.norm(pos_new.reshape((1,dims)) - positions_new, axis=1) < min_dist).sum() > 1:
+            # reject move if it brings two fluors too close together
+            f_new = np.inf
+
+        if f_new is None:
           f_new = loss_func(positions_new)
 
         df = max(f_new - f_cur, 0)
@@ -956,7 +970,7 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
 #        print(f_cur, f_new, accept_prob)
         accept = False
         if rng.uniform(0,1) < accept_prob:
-          positions_cur = positions_new
+          params_cur = params_new
           f_cur = f_new
           accept = True
 
@@ -968,25 +982,31 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
         step_size *= step_size_adjust ** accept_change
 #        print(accept_rate, accept_change, step_size)
 
-      if verbose and i%500 == 0:
+      if verbose and i%50 == 0:
+        positions_cur = positions_from_params(params_cur)
         K_fret, K_input, K_output, K_quench = rates_from_positions(positions_cur)
-        print(i, T, f_cur, positions_cur)
-        print(i, K_fret)
+        print(f'Iteration {i} (T={T}):')
+        print('params | positions:')
+        print(np.hstack((params_cur, positions_cur)))
+        print('K_fret:')
+        print(K_fret)
 #        print(i, K_input)
 #        print(i, K_output)
 #        print(i, K_quench)
-        print(i, np.mean(accept_hist, axis=0), step_size)
+        print(f'Iteration {i} (T = {T}): Acceptance averages = {np.mean(accept_hist, axis=0)}')
+        print(f'Iteration {i} (T = {T}): Step sizes = {step_size}')
+        print(f'Iteration {i} (T={T}): f_cur = {f_cur}')
         loss_func(positions_cur, verbose=True)
 
       if history_output_interval is not None and i%history_output_interval == 0:
-        pos_hist.append((T, f_cur, positions_cur))
+        pos_hist.append((T, f_cur, positions_from_params(params_cur)))
 
   
   #    print(f'Monte Carlo optimization results: {f_cur}')
 
     # Center positions around the origin
+    positions_cur = positions_from_params(params_cur)
     positions_cur -= positions_cur.mean(axis=0)
-    
 
     K_fret_CC, K_fret_IC, K_fret_CO, K_fret_CQ = rates_from_positions(positions_cur)
     k_in = np.diag(K_fret_IC)

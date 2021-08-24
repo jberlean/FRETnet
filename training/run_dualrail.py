@@ -128,8 +128,8 @@ train_kwargs_MGpf = dict(
     position_bounds = (-1e2, 1e2), 
     min_dist = 1, 
     max_dist_CI = 6,
-    max_dist_CO = np.inf,
-    max_dist_CQ = np.inf,
+    max_dist_CO = 6,
+    max_dist_CQ = 8,
     dims = 3, 
     input_magnitude = 100, 
     output_magnitude = 1, 
@@ -182,9 +182,9 @@ for d in stored_data:
 
 # Generate training data
 if train_data_user is None:
-  train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, rng = rng)
+  train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, filter_zero = True, rng = rng)
 else:
-  train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, rng = rng) # to make sure RNG is in the same state regardless of whether training data is user-specified
+  train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, filter_zero = True, rng = rng) # to make sure RNG is in the same state regardless of whether training data is user-specified
   train_data = [
       (np.array(input_data), np.array(output_data))
       for input_data, output_data in train_data_user
@@ -217,7 +217,7 @@ pbar_file.close()
 # Output comprehensive results
 output = {
   'seed': seed,
-  'num_nodes': num_nodes,
+  'num_nodes': num_nodes_dualrail,
   'num_patterns': num_patterns,
   'stored_data': stored_data,
   'train_data': train_data,

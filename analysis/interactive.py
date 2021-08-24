@@ -134,12 +134,15 @@ class DualRailNetworkPlot(object):
     for i1,i2 in zip(*np.triu_indices(num_nodes,1)):
       ko1, ko2 = kout[i1], kout[i2]
       kf1, kf2 = K_fret[i1,i2], K_fret[i2,i1]
-      if kf1 > 0 and kf2 > 0:  w = (max(kf1/ko1, kf2/ko2))**(1/6)
-      elif kf1 > 0:           w = (kf1/ko1)**(1/6)
-      elif kf2 > 0:           w = (kf2/ko2)**(1/6)
+      if kf1 > 0 and kf2 > 0:  d = (min(ko1/kf1, ko2/kf2))**(1/6)
+      elif kf1 > 0:           d = (ko1/kf1)**(1/6)
+      elif kf2 > 0:           d = (ko2/kf2)**(1/6)
       else:                   continue
 
-      network_nx.add_edge(node_names[i1], node_names[i2], weight=2*(w**3*(w<1) + w*(w>=1)), spring_weight=w)
+      w = 1/d
+      w = 2*(w**3*(w<1) + w*(w>=1))
+      sw = 1/d * (2/(d+1) + 1)
+      network_nx.add_edge(node_names[i1], node_names[i2], weight=w, spring_weight=sw)
 
     node_angles = [np.pi-i/(num_nodes) for i in range(num_nodes)]
     node_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(node_names, node_angles)}
@@ -151,7 +154,7 @@ class DualRailNetworkPlot(object):
     circular_pos = {n: (np.cos(theta), np.sin(theta)) for n,theta in zip(self._node_names, node_angles)}
     return circular_pos
   def _calc_network_node_pos_spring(self):
-    node_pos = self._calc_network_node_pos_circular()
+    node_pos = nx.drawing.layout.kamada_kawai_layout(self._network_nx, weight='spring_weight')
     spring_pos = nx.drawing.layout.spring_layout(self._network_nx, pos=node_pos, fixed=None, weight='spring_weight')
     return spring_pos
     
