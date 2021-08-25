@@ -56,6 +56,7 @@ noise = user_args.get('train_data_noise', 0.1)
 duplication = user_args.get('train_data_duplication', 20)
 corruption_mode = user_args.get('train_data_corruption_mode', 'flip')
 train_data_user = user_args.get('train_data', None)
+train_data_weights = user_args.get('train_data_weights', None)
 
 # System parameters
 input_fluor_info = {
@@ -183,6 +184,9 @@ for d in stored_data:
 # Generate training data
 if train_data_user is None:
   train_data = train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, filter_zero = True, rng = rng)
+  train_data_lst = [(tuple(d_in), tuple(d_out)) for d_in,d_out in train_data]
+  train_data = list(set(train_data_lst))
+  train_data_weights = [train_data_lst.count(d) for d in train_data]
 else:
   train_dualrail.generate_training_data(stored_data, noise = noise, duplication=duplication, mode = corruption_mode, filter_zero = True, rng = rng) # to make sure RNG is in the same state regardless of whether training data is user-specified
   train_data = [
@@ -200,15 +204,15 @@ train_seed_base = rng.integers(0, 10**6)
 pbar_file = open(pbarpath, 'w')
 
 if train_MC:
-  results_MC, train_seeds_MC = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MC, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
+  results_MC, train_seeds_MC = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MC, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MC)
 if train_GD:
-  results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
+  results_GD, train_seeds_GD = train_dualrail.train_dr_multiple(train_dualrail.train_dr, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_GD)
 if train_MG:
-  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
+  results_MG, train_seeds_MG = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MG)
 if train_MGp:
-  results_MGp, train_seeds_MGp = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGp)
+  results_MGp, train_seeds_MGp = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGp)
 if train_MGpf:
-  results_MGpf, train_seeds_MGpf = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions_full, train_data, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGpf)
+  results_MGpf, train_seeds_MGpf = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions_full, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGpf)
   
   
 
@@ -327,12 +331,13 @@ output_best = {
 with open(outpath_best, 'wb') as outfile:
   pickle.dump(output_best, outfile)
 
-positions_map = {f_name: positions[i,:] for i,f_name in enumerate(fluor_names)}
-
-IO.output_network_excel(outpath_best_excel, K_fret, [f for f,t in zip(fluor_names, fluor_types) if t=='C'], positions_map)
-
-mol2_comments = [
-    f'# Source: {outpath_best}',
-    f'# Created by: Joseph Berleant',
-]
-IO.output_network_mol2(outpath_best_mol2, fluor_names, positions_map, fluor_types, outpath_prefix, mol2_comments)
+if positions is not None:
+  positions_map = {f_name: positions[i,:] for i,f_name in enumerate(fluor_names)}
+  
+  IO.output_network_excel(outpath_best_excel, K_fret, [f for f,t in zip(fluor_names, fluor_types) if t=='C'], positions_map)
+  
+  mol2_comments = [
+      f'# Source: {outpath_best}',
+      f'# Created by: Joseph Berleant',
+  ]
+  IO.output_network_mol2(outpath_best_mol2, fluor_names, positions_map, fluor_types, outpath_prefix, mol2_comments)

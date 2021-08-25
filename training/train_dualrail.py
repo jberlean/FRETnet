@@ -286,7 +286,7 @@ def train_dr_hebbian(train_data):
 
     return K_fret, k_out
 
-def train_dr(train_data, loss, init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 1, seed = None):
+def train_dr(train_data, loss, train_data_weights = None, init = 'random', input_magnitude = 1, output_magnitude = None, k_out_value = 1, seed = None):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -353,7 +353,7 @@ def train_dr(train_data, loss, init = 'random', input_magnitude = 1, output_magn
    
     return output
     
-def train_dr_MC(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
+def train_dr_MC(train_data, loss, train_data_weights = None, low_bound = 1e-2, high_bound = 1e4, input_magnitude = 1, output_magnitude = None, k_out_value = 1, anneal_protocol = None, goal_accept_rate = 0.3, init_noise = 2, seed = None, verbose=False):
     def rates_to_params(K_fret, k_out):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params = np.concatenate((K_fret[idxs], k_out))
@@ -454,7 +454,7 @@ def train_dr_MC(train_data, loss, low_bound = 1e-2, high_bound = 1e4, input_magn
    
     return output
 
-def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = None, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out, k_decay):
         params = np.empty(num_params)
 
@@ -475,24 +475,30 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out, k_decay
 
-    def loss_func(params, Ainvs):
+    def loss_func(params, Ainvs, verbose=False):
         K_fret, k_out, k_decay = params_to_rates(params)
 
-        resid = (np.array([
-            loss.fn(
-                calc_network_output_dr(
-                    input_data,
-                    K_fret,
-                    k_out,
-                    decay_rates_sr = k_decay,
-                    input_magnitude = input_magnitude,
-                    output_magnitude = output_magnitude,
-                    Ainv = Ainv
-                )[0],
-                output_data_cor
-            ) 
-            for (input_data,output_data_cor),Ainv in zip(train_data, Ainvs)
-        ])**2).sum()
+        output_data_all = [
+            calc_network_output_dr(
+                input_data,
+                K_fret,
+                k_out,
+                decay_rates_sr = k_decay,
+                input_magnitude = input_magnitude,
+                output_magnitude = output_magnitude,
+                Ainv = Ainv
+            )
+            for (input_data, _), Ainv in zip(train_data, Ainvs)
+        ]
+
+        resid = np.sqrt(np.array([
+            loss.fn(output_data[0], output_data_cor)**2 * weight
+            for output_data, (input_data, output_data_cor), weight in zip(output_data_all, train_data, train_data_weights)
+        ]).sum() / train_data_weight_sum)
+
+        if verbose:
+          for output_data, (input_data,output_data_cor), w in zip(output_data_all, train_data, train_data_weights):
+            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), f'x{w}')
 
         return resid
 
@@ -503,6 +509,10 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
 
     if output_magnitude is None:
       output_magnitude = input_magnitude*k_out_value/(input_magnitude + k_out_value)
+
+    if train_data_weights is None:
+      train_data_weights = np.ones(len(train_data))
+    train_data_weight_sum = sum(train_data_weights)
 
     num_params_k_fret = num_nodes_sr*(num_nodes_sr-1)//2
     num_params_k_decay = num_nodes_sr
@@ -603,8 +613,16 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
         Ainvs_cur = Ainvs_new
 
       if verbose and i%500 == 0:
-        print(i, T, f_cur, params_cur)
-        print(i, np.mean(accept_hist, axis=0), step_size)
+        K_fret, k_out, k_decay = params_to_rates(params_cur)
+        print(f'Iteration {i} (T={T}):')
+        print('K_fret:')
+        print(K_fret)
+        print(f'k_out: {k_out}')
+        print(f'k_decay: {k_decay}')
+        print(f'Iteration {i} (T={T}): Acceptance averages = {np.mean(accept_hist, axis=0)}')
+        print(f'Iteration {i} (T={T}): Step sizes = {step_size}')
+        print(f'Iteration {i} (T={T}): f_cur = {f_cur}')
+        loss_func(params_cur, Ainvs_cur, verbose=True)
 
       if history_output_interval is not None and i%history_output_interval == 0:
         params_hist.append((T, f_cur, params_cur))
@@ -623,7 +641,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, k_fret_bounds = (1e-2, 1
    
     return output
 
-def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_cc = 1, position_bounds = (-1e2, 1e2), min_dist=1, dims=3, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, train_data_weights = None, k_0 = 1, r_0_cc = 1, position_bounds = (-1e2, 1e2), min_dist=1, dims=3, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_from_positions(positions):
         K_fret = np.array([
             [
@@ -638,38 +656,40 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 #        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out, k_decay
 
-    def loss_func(positions):
+    def loss_func(positions, verbose = False):
         K_fret, k_out, k_decay = rates_from_positions(positions)
-#        print(params)
-#        print(K_fret)
-#        print(k_out)
-#        print(k_decay)
-#        sys.exit(0)
 
-        resid = np.array([
-            loss.fn(
-                calc_network_output_dr(
-                    input_data,
-                    K_fret,
-                    k_out,
-                    decay_rates_sr = k_decay,
-                    input_magnitude = input_magnitude,
-                    output_magnitude = output_magnitude,
-                )[0],
-                output_data_cor
-            )**2 * multiplicity
-            for (input_data,output_data_cor),multiplicity in train_data_opt
-        ]).sum()
+        output_data_all = [
+            calc_network_output_dr(
+                input_data,
+                K_fret,
+                k_out,
+                decay_rates_sr = k_decay,
+                input_magnitude = input_magnitude,
+                output_magnitude = output_magnitude,
+            )
+            for input_data,_ in train_data
+        ]
+
+        resid = np.sqrt(np.array([
+            loss.fn(output_data[0], output_data_cor)**2 * weight
+            for output_data, (input_data, output_data_cor), weight in zip(output_data_all, train_data, train_data_weights)
+        ]).sum() / train_data_weight_sum)
+
+        if verbose:
+          for output_data, (input_data,output_data_cor), w in zip(output_data_all, train_data, train_data_weights):
+            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), f'x{w}')
 
         return resid
+
 
     rng = np.random.default_rng(seed)
 
     num_nodes_dr = len(train_data[0][0])
     num_nodes_sr = 2*num_nodes_dr
 
-    train_data_hashable = [tuple(map(tuple, d)) for d in train_data]
-    train_data_opt = [(d, train_data_hashable.count(d)) for d in set(train_data_hashable)]
+    if train_data_weights is None:  train_data_weights = np.ones(len(train_data))
+    train_data_weight_sum = sum(train_data_weights)
 
     if output_magnitude is None:
       output_magnitude = input_magnitude*k_out_value/(input_magnitude + k_out_value)
@@ -728,10 +748,18 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
 #        print(accept_rate, accept_change, step_size)
 
       if verbose and i%500 == 0:
-        K_fret, _, _ = rates_from_positions(positions_cur)
-        print(i, T, f_cur, positions_cur)
-        print(i, K_fret)
-        print(i, np.mean(accept_hist, axis=0), step_size)
+        K_fret, k_out, k_decay = rates_from_positions(positions_cur)
+        print(f'Iteration {i} (T={T}):')
+        print('K_fret:')
+        print(K_fret)
+        print(f'k_out: {k_out}')
+        print(f'k_decay: {k_decay}')
+        print(f'Iteration {i} (T={T}): Acceptance averages = {np.mean(accept_hist, axis=0)}')
+        print(f'Iteration {i} (T={T}): Step sizes = {step_size}')
+        print(f'Iteration {i} (T={T}): f_cur = {f_cur}')
+        loss_func(positions_cur, verbose=True)
+
+
 
       if history_output_interval is not None and i%history_output_interval == 0:
         pos_hist.append((T, f_cur, positions_cur))
@@ -777,7 +805,7 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, k_0 = 1, r_0_c
    
     return output
 
-def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_fluor_info = {}, compute_fluor_info = {}, position_bounds = (-1e2, 1e2), min_dist=1, max_dist_CI = np.inf, max_dist_CO = np.inf, max_dist_CQ = np.inf, dims=3, input_magnitude = 100, output_magnitude = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_data_weights = None, input_fluor_info = {}, compute_fluor_info = {}, position_bounds = (-1e2, 1e2), min_dist=1, max_dist_CI = np.inf, max_dist_CO = np.inf, max_dist_CQ = np.inf, dims=3, input_magnitude = 100, output_magnitude = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def initialize_positions():
       init_pos = np.empty((num_fluorophores, dims))
       for node_idx in range(num_nodes_sr):
@@ -871,16 +899,16 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
                 output_magnitude = output_magnitude,
                 verbose = (verbose and (i%500==0))
             )
-            for (input_data,output_data_cor),multiplicity in train_data_opt
+            for input_data,_ in train_data
         ]
         resid = np.sqrt(np.array([
-            loss.fn(output_data[0], output_data_cor)**2 * multiplicity
-            for output_data, ((input_data,output_data_cor), multiplicity) in zip(output_data_all, train_data_opt)
-        ]).sum() / len(train_data))
+            loss.fn(output_data[0], output_data_cor)**2 * weight
+            for output_data, (input_data,output_data_cor), weight in zip(output_data_all, train_data, train_data_weights)
+        ]).sum() / train_data_weight_sum)
 
         if verbose:
-          for output_data, ((input_data,output_data_cor),multiplicity) in zip(output_data_all, train_data_opt):
-            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), multiplicity)
+          for output_data, (input_data,output_data_cor),w in zip(output_data_all, train_data, train_data_weight):
+            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), f'x{w}')
 
         return resid
 
@@ -890,8 +918,8 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
     num_nodes_sr = 2*num_nodes_dr
     num_fluorophores = 4*num_nodes_sr
 
-    train_data_hashable = [tuple(map(tuple, d)) for d in train_data]
-    train_data_opt = [(d, train_data_hashable.count(d)) for d in set(train_data_hashable)]
+    if train_data_weights is None:  train_data_weights = np.ones(len(train_data))
+    train_data_weight_sum = sum(train_data_weights)
 
     I_k0 = input_fluor_info.get('k_0', 1)
     C_k0 = compute_fluor_info.get('k_0', 1)
@@ -1061,41 +1089,41 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, input_flu
 
 
 def train_dr_multiple_multiprocessing_aux(args):
-    train_func, train_data, loss, seed, train_kwargs = args
-    return train_func(train_data, loss, seed=seed, **train_kwargs)
-def train_dr_multiple_multiprocessing(train_func, train_data, loss, processes, reps, pbar_file, seed, **train_kwargs):
+    train_func, train_data, train_data_weights, loss, seed, train_kwargs = args
+    return train_func(train_data, loss, train_data_weights = train_data_weights, seed=seed, **train_kwargs)
+def train_dr_multiple_multiprocessing(train_func, train_data, train_data_weights, loss, processes, reps, pbar_file, seed, **train_kwargs):
     rng = np.random.default_rng(seed)
     
     seeds = [rng.integers(0, 10**6) for _ in range(reps)]
 
     results = []
     with mp.Pool(processes=processes) as pool:
-      args_lst = [(train_func, train_data, loss, seed, train_kwargs) for seed in seeds]
+      args_lst = [(train_func, train_data, train_data_weights, loss, seed, train_kwargs) for seed in seeds]
       results_it = pool.imap(train_dr_multiple_multiprocessing_aux, args_lst)
       for res in tqdm.tqdm(results_it, total=reps, file=pbar_file):
         results.append(res)
 
     return results, seeds
 
-def train_dr_multiple_singleprocessing(train_func, train_data, loss, reps, pbar_file, seed, **train_kwargs):
+def train_dr_multiple_singleprocessing(train_func, train_data, train_data_weights, loss, reps, pbar_file, seed, **train_kwargs):
     rng = np.random.default_rng(seed)
     
     seeds = [rng.integers(0, 10**6) for _ in range(reps)]
 
     results = []
     for train_seed in tqdm.tqdm(seeds, file=pbar_file):
-      res = train_func(train_data, loss, seed=seed, **train_kwargs)
+      res = train_func(train_data, loss, train_data_weights = train_data_weights, seed=seed, **train_kwargs)
       results.append(res)
 
     return results, seeds
 
-def train_dr_multiple(train_func, train_data, loss, processes = None, reps = 10, pbar_file = None, seed = None, **train_kwargs):
+def train_dr_multiple(train_func, train_data, train_data_weights, loss, processes = None, reps = 10, pbar_file = None, seed = None, **train_kwargs):
     if pbar_file is None:  pbar_file = sys.stderr # default for tqdm
 
     if processes is None:
-      results, seeds = train_dr_multiple_singleprocessing(train_func, train_data, loss, reps, pbar_file, seed, **train_kwargs)
+      results, seeds = train_dr_multiple_singleprocessing(train_func, train_data, train_data_weights, loss, reps, pbar_file, seed, **train_kwargs)
     else:
-      results, seeds = train_dr_multiple_multiprocessing(train_func, train_data, loss, processes, reps, pbar_file, seed, **train_kwargs)
+      results, seeds = train_dr_multiple_multiprocessing(train_func, train_data, train_data_weights, loss, processes, reps, pbar_file, seed, **train_kwargs)
 
 
     return results, seeds
