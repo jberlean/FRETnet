@@ -391,7 +391,7 @@ class FullHANlikeNetwork(HANlikeNetwork):
 # CONVENIENCE FUNCTIONS
 ######
 
-def network_from_rates(K_fret, k_out, k_in, k_decay = None, node_names = None):
+def network_from_rates(K_fret, k_out, k_in, k_decay = None, node_names = None, hanlike=True):
     num_nodes = len(k_out)
 
     if k_decay is None:
@@ -407,7 +407,10 @@ def network_from_rates(K_fret, k_out, k_in, k_decay = None, node_names = None):
         if i==j:  continue
         nodes[j].add_input(nodes[i], K_fret[i,j])
 
-    return Network(nodes)
+    if hanlike:
+      return HANlikeNetwork(nodes)
+    else:
+      return Network(nodes)
 
 
 def full_HANlike_network_from_rates(K_fret_IC, K_fret_CC, K_fret_CO, K_fret_CQ, I_kin, I_k0=1, I_kdecay=0, C_k0=1, C_kdecay=0, node_names=None):

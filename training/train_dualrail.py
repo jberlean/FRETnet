@@ -907,7 +907,7 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_dat
         ]).sum() / train_data_weight_sum)
 
         if verbose:
-          for output_data, (input_data,output_data_cor),w in zip(output_data_all, train_data, train_data_weight):
+          for output_data, (input_data,output_data_cor),w in zip(output_data_all, train_data, train_data_weights):
             print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), f'x{w}')
 
         return resid

@@ -125,8 +125,6 @@ class DualRailNetworkPlot(object):
     network_nx = nx.Graph()
     network_nx.add_nodes_from(node_names)
 
-    network.set_k_in(np.ones(network.num_node_groups))
-
     K_fret = network.get_K_fret()
     kout = np.array([n.emit_rate for n in network.nodes])
     kout[kout == 0] = 1
