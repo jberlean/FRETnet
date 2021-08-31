@@ -1090,7 +1090,8 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_dat
 
 def train_dr_multiple_multiprocessing_aux(args):
     train_func, train_data, train_data_weights, loss, seed, train_kwargs = args
-    return train_func(train_data, loss, train_data_weights = train_data_weights, seed=seed, **train_kwargs)
+    res = train_func(train_data, loss, train_data_weights = train_data_weights, seed=seed, **train_kwargs)
+    return res
 def train_dr_multiple_multiprocessing(train_func, train_data, train_data_weights, loss, processes, reps, pbar_file, seed, **train_kwargs):
     rng = np.random.default_rng(seed)
     

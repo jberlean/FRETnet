@@ -45,43 +45,61 @@ output_magnitude = data['output_magnitude']
 
 stored_data = data['training_metadata']['stored_data']
 
-num_pixels = data['num_pixels']
+num_pixels = data['num_nodes_dualrail']
+num_nodes_singlerail = data['num_nodes_singlerail']
 num_fluorophores = data['num_fluorophores']
-pixel_names = data['pixel_names']
+pixel_names = data['node_names_dualrail']
 fluorophore_names = data['fluorophore_names']
-pixel_to_fluorophore_map = data['pixel_to_fluorophore_map']
+pixel_to_fluorophore_map = data['dualrail_to_singlerail_map']
 
-network = data['network']
-pixel_to_node_map = {px: (network.nodes[fluorophore_names.index(f_pos)], network.nodes[fluorophore_names.index(f_neg)]) for px, (f_pos, f_neg) in pixel_to_fluorophore_map.items()}
+K_fret = data['K_fret']
+k_out = data['k_out']
+k_decay = data.get('k_decay', np.zeros_like(k_out))
+
+network = fretnet_objects.network_from_rates(K_fret, k_out, np.zeros_like(k_out), k_decay = k_decay, node_names = fluorophore_names, hanlike=True)
+
+if pixel_to_fluorophore_map is None:
+  pixel_to_node_map = {i: (2*i,2*i+1) for i in range(num_pixels)}
+else:
+  px_to_idx = {px:i for i,px in enumerate(pixel_names)}
+  fluor_to_idx = {f:i for i,f in enumerate(fluorophore_names)}
+  pixel_to_node_map = {px_to_idx[px]: (fluor_to_idx[fp], fluor_to_idx[fn]) for px, (fp, fn) in pixel_to_fluorophore_map.items()}
+
 
 ## Test network
 if qstyle:
-  inputs = list(it.product([-1, 0, 1], repeat=num_pixels))
+  inputs = np.array(list(it.product([-1, 0, 1], repeat=num_pixels)))
 else:
-  inputs = list(it.product([-1, 1], repeat=num_pixels))
+  inputs = np.array(list(it.product([-1, 1], repeat=num_pixels)))
+
+input_idxs = {tuple(inputs[idx,:]): idx for idx in range(inputs.shape[0])}
 
 outputs = []
 for img_input in tqdm.tqdm(inputs):
-  for px_name, px_val in zip(pixel_names, img_input):
-    node_pos, node_neg = pixel_to_node_map[px_name]
-    node_pos.production_rate = max(0, input_magnitude*px_val)
-    node_neg.production_rate = max(0, -input_magnitude*px_val)
+  k_in = np.zeros(num_nodes_singlerail)
+  for px_idx, px_val in enumerate(img_input):
+    node_sr_pos, node_sr_neg = pixel_to_node_map[px_idx]
+    k_in[node_sr_pos] = max(0, input_magnitude*px_val)
+    k_in[node_sr_neg] = max(0, -input_magnitude*px_val)
+  network.set_k_in(k_in)
 
-  network_output = analyze.node_outputs(network, hanlike=True)
-  img_output = [(network_output[pixel_to_node_map[px][0]] - network_output[pixel_to_node_map[px][1]])/output_magnitude for px in pixel_names]
+  network_output_dict = analyze.node_outputs(network, hanlike=True)
+  network_output = [network_output_dict[n] for n in network.nodes]
+  img_output = [(network_output[pixel_to_node_map[px_idx][0]] - network_output[pixel_to_node_map[px_idx][1]])/output_magnitude for px_idx in range(num_pixels)]
 
   outputs.append(img_output)
+outputs = np.array(outputs)
   
 #clusters = sklearn.cluster.OPTICS(min_samples=.06, metric='euclidean').fit_predict(outputs)
 #clusters = sklearn.cluster.SpectralClustering(n_clusters = 8).fit_predict(outputs)
-clusters = sklearn.cluster.MeanShift(bandwidth=np.sqrt(num_pixels*.4**2)).fit_predict(outputs)
+clusters = sklearn.cluster.MeanShift(bandwidth=np.sqrt(num_pixels*.2**2)).fit_predict(outputs)
 #clusters = sklearn.cluster.AffinityPropagation().fit_predict(outputs)
 num_clusters = len(set(clusters))
 
 tsne_res = TSNE(n_components=2, perplexity=tsne_perplexity, init='pca', verbose=5).fit_transform(outputs)
 
 
-good_clusters = sorted(set(clusters[inputs.index(tuple(stored_img))] for stored_img in stored_data) - {-1})
+good_clusters = sorted(set(clusters[input_idxs[tuple(stored_img)]] for stored_img in stored_data) - {-1})
 
 ## Plot results
 colors = ['tab:blue','tab:orange','tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
@@ -126,7 +144,7 @@ for cluster in sorted(set(clusters)):
   print(f'  Output Mean: {output_mean}')
   print(f'  Nodes: {cluster_nodes_str}')
 
-  nx.draw_networkx(network_nx, nodelist = cluster_nodes_str, pos=node_pos, node_color=node_color, alpha=node_alpha, linewidths=linewidths, edgecolors=edgecolors, ax=ax, with_labels=False)
+  nx.draw_networkx(network_nx, nodelist = cluster_nodes_str, pos=node_pos, node_color=node_color, alpha=node_alpha, node_size = 10, linewidths=linewidths, edgecolors=edgecolors, ax=ax, with_labels=False)
 
   cluster_info[cluster] = {
     'color': node_color,
@@ -138,7 +156,7 @@ for cluster in sorted(set(clusters)):
   }
 
 node_labels = {node: '' for node in inputs_str}
-node_labels.update({inputs_str[inputs.index(tuple(stored_img))]:inputs_str[inputs.index(tuple(stored_img))] for stored_img in stored_data})
+node_labels.update({inputs_str[input_idxs[tuple(stored_img)]]:inputs_str[input_idxs[tuple(stored_img)]] for stored_img in stored_data})
 nx.draw_networkx_labels(network_nx, pos=node_pos, labels=node_labels)
 
 plt.savefig(os.path.join(outputdir, 'image_output_clustering.pdf'))
