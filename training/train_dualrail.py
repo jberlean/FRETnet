@@ -454,25 +454,27 @@ def train_dr_MC(train_data, loss, train_data_weights = None, low_bound = 1e-2, h
    
     return output
 
-def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = None, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = None, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), k_fret_toggle_prob = None, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out, k_decay):
-        params = np.empty(num_params)
-
         idxs = np.triu_indices(num_nodes_sr, 1)
-        params[:num_params_k_fret] = K_fret[idxs]
+        params_k_fret_toggle = (K_fret[idxs] > 0)
+        params_k_fret_rate = K_fret[idxs] + (~params_k_fret_toggle)*k_fret_bounds[0]
 
-        params[num_params_k_fret:] = k_decay
+        params_k_decay = k_decay
+
+        params = (params_k_fret_rate, params_k_fret_toggle, params_k_decay)
 
         return params
-    def params_to_rates(p):
+    def params_to_rates(params):
+        params_k_fret_rate, params_k_fret_toggle, params_k_decay = params
         K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
         for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)): # TODO: switch to using np.triu_indices()
-            K_fret[i,j] = p[idx]
-            K_fret[j,i] = p[idx]
-        k_decay = p[num_params_k_fret:]
+            k = params_k_fret_rate[idx] if params_k_fret_toggle[idx] else 0.0
+            K_fret[i,j] = k
+            K_fret[j,i] = k
+        k_decay = params_k_decay
         k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
-#        k_out = p[-num_nodes_sr:] # use this line for optimized, non-uniform k_out
         return K_fret, k_out, k_decay
 
     def loss_func(params, Ainvs, verbose=False):
@@ -519,6 +521,8 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
     num_params = num_params_k_fret + num_params_k_decay
     train_k_fret = k_fret_bounds[0] != k_fret_bounds[1]
     train_k_decay = k_decay_bounds[0] != k_decay_bounds[1]
+
+    k_fret_node_idxs = list(zip(*np.triu_indices(num_nodes_sr, 1)))
  
     accept_hist_len = 50
 
@@ -547,15 +551,9 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
     step_size_adjust = 1.02
 
     params_train_protocol = [ # list of info needed to train each parameter
-        (p_idx, k_fret_bounds[0], k_fret_bounds[1], adjust_Ainv_kfret, (node_in, node_out))
-        for p_idx, (node_in, node_out) 
-        in enumerate(zip(*np.triu_indices(num_nodes_sr, 1)))
-        if train_k_fret
+        (idx, 'k_fret', idx) for idx in range(num_params_k_fret) if train_k_fret
     ] + [
-        (node+num_params_k_fret, k_decay_bounds[0], k_decay_bounds[1], adjust_Ainv_koff, (node,))
-        for node
-        in range(num_nodes_sr)
-        if train_k_decay
+        (idx + num_params_k_fret, 'k_decay', idx) for idx in range(num_params_k_decay) if train_k_decay
     ]
 
     params_hist = []
@@ -565,18 +563,55 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
     else:
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
     for i, T in temps_iter:
-      steps = rng.normal(0, step_size, num_params)
-      for p_idx, low_bound, high_bound, adjust_Ainv_func, adjust_Ainv_args in params_train_protocol:
-        param_cur = params_cur[p_idx]
-        param_new = param_cur * np.exp(steps[p_idx])
+      rate_steps = rng.normal(0, step_size, num_params)
+      if k_fret_toggle_prob is not None:
+        toggle_steps = rng.binomial(n=1, p=k_fret_toggle_prob, size=num_params_k_fret)
+      else:
+        toggle_steps = [False]*num_params_k_fret
+      for param_idx, param_type, idx in params_train_protocol:
+#      for p_idx, low_bound, high_bound, adjust_Ainv_func, adjust_Ainv_args in params_train_protocol:
+        params_k_fret_rate, params_k_fret_toggle, params_k_decay = params_cur
 
-        params_new = params_cur.copy()
-        params_new[p_idx] = param_new
+        if param_type == 'k_fret':
+          lb,hb = k_fret_bounds
+
+          rate_cur = params_k_fret_rate[idx]
+          toggle_cur = params_k_fret_toggle[idx]
+          rate_new = rate_cur * np.exp(rate_steps[param_idx])
+          toggle_new = ~toggle_cur if toggle_steps[idx] else toggle_cur
+
+          params_k_fret_rate_new = params_k_fret_rate.copy()
+          params_k_fret_rate_new[idx] = rate_new
+          params_k_fret_toggle_new = params_k_fret_toggle.copy()
+          params_k_fret_toggle_new[idx] = toggle_new
+          params_new = (params_k_fret_rate_new, params_k_fret_toggle_new, params_k_decay)
+
+          d_rate = toggle_new*rate_new - toggle_cur*rate_cur
+          adjust_Ainv_func = lambda Ainv: adjust_Ainv_kfret(Ainv, d_rate, *k_fret_node_idxs[idx])
   
-        if param_new > high_bound or param_new < low_bound: # throw out any moves outside the bounding box
-          f_new = np.inf
+        elif param_type == 'k_decay':
+          lb,hb = k_decay_bounds
+
+          rate_cur = params_k_decay[idx]
+          rate_new = rate_cur * np.exp(rate_steps[param_idx])
+
+          params_k_decay_new = params_k_decay.copy()
+          params_k_decay_new[idx] = rate_new
+          params_new = (params_k_fret_rate, params_k_fret_toggle, params_k_decay_new)
+
+          d_rate = rate_new - rate_cur
+          adjust_Ainv_func = lambda Ainv: adjust_Ainv_koff(Ainv, d_rate, idx)
+  
         else:
-          Ainvs_new = [adjust_Ainv_func(Ainv, param_new - param_cur, *adjust_Ainv_args) for Ainv in Ainvs_cur]
+          raise ValueError(f'Unknown parameter type during Monte Carlo optimization: {param_type}')
+
+        if rate_new > hb or rate_new < lb: # throw out any moves outside the bounding box
+          f_new = np.inf
+        elif d_rate == 0: # do not recalculate if rate didn't change (e.g. if toggle stayed set to OFF)
+          Ainvs_new = Ainvs_cur
+          f_new = f_cur
+        else:
+          Ainvs_new = [adjust_Ainv_func(Ainv) for Ainv in Ainvs_cur]
           f_new = loss_func(params_new, Ainvs_new)
 
         df = max(f_new - f_cur, 0)
@@ -588,7 +623,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
           f_cur = f_new
           accept = True
   
-        accept_hist[i%accept_hist_len, p_idx] = accept
+        accept_hist[i%accept_hist_len, param_idx] = accept
 
       if i % accept_hist_len == accept_hist_len-1:
         accept_rate = np.mean(accept_hist, axis=0)
@@ -615,6 +650,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
       if verbose and i%500 == 0:
         K_fret, k_out, k_decay = params_to_rates(params_cur)
         print(f'Iteration {i} (T={T}):')
+        print(f'{params_cur}')
         print('K_fret:')
         print(K_fret)
         print(f'k_out: {k_out}')

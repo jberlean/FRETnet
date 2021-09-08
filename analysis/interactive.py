@@ -89,6 +89,7 @@ class DualRailNetworkPlot(object):
     self._network_nx, self._network_nx_node_pos = self._init_network_nx(self._network)
     self._network_nx_node_pos = self._calc_network_node_pos_spring()
     self._network_activation_mode = 'output'
+    self._network_nx_font_size = 6 if self._is_full_network else 10
 
     # network inputs/outputs
     self._network_input = np.zeros(len(self._nodes))
@@ -369,7 +370,7 @@ class DualRailNetworkPlot(object):
     _,_,edge_weights = zip(*self._network_nx.edges.data('weight'))
 
     ax.clear()
-    nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, font_color=(.5,.5,.5), font_weight='bold', edgecolors='k', width=edge_weights, font_size = 6)
+    nx.draw_networkx(self._network_nx, pos=self._network_nx_node_pos, ax=ax, with_labels=True, node_color=node_colors, node_size=400, font_color=(.5,.5,.5), font_weight='bold', edgecolors='k', width=edge_weights, font_size = self._network_nx_font_size)
 
     if ax_cbar is None:
       ax_cbar = self._figure.colorbar(mappable, ax=ax)
