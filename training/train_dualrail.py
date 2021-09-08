@@ -3,6 +3,7 @@ import itertools as it
 import pickle
 import math
 import multiprocessing as mp
+import time
 
 import numpy as np
 import scipy.optimize
@@ -562,6 +563,9 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
       temps_iter = enumerate(anneal_protocol)
     else:
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
+
+    time_last_update = time.time()
+
     for i, T in temps_iter:
       rate_steps = rng.normal(0, step_size, num_params)
       if k_fret_toggle_prob is not None:
@@ -647,7 +651,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
 
         Ainvs_cur = Ainvs_new
 
-      if verbose and i%500 == 0:
+      if verbose and (i%500 == 0 or time.time() - time_last_update > 120):
         K_fret, k_out, k_decay = params_to_rates(params_cur)
         print(f'Iteration {i} (T={T}):')
         print(f'{params_cur}')
@@ -659,6 +663,7 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
         print(f'Iteration {i} (T={T}): Step sizes = {step_size}')
         print(f'Iteration {i} (T={T}): f_cur = {f_cur}')
         loss_func(params_cur, Ainvs_cur, verbose=True)
+        time_last_update = time.time()
 
       if history_output_interval is not None and i%history_output_interval == 0:
         params_hist.append((T, f_cur, params_cur))
