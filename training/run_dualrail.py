@@ -28,7 +28,8 @@ train_GD = train_mode[1]=='1'
 train_MG = train_mode[2]=='1'
 train_MGp = train_mode[3:4] == '1'
 train_MGpf = train_mode[4:5] == '1'
-train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train_MG else ""}{"MGp" if train_MGp else ""}{"MGpf" if train_MGpf else ""}' # for file paths
+train_MGpf2 = train_mode[5:6] == '1'
+train_str = f'{"MC" if train_MC else ""}{"GD" if train_GD else ""}{"MG" if train_MG else ""}{"MGp" if train_MGp else ""}{"MGpf" if train_MGpf else ""}{"MGpf2" if train_MGpf2 else ""}' # for file paths
 
 if len(sys.argv) >= 3: 
   user_args_path = sys.argv[2]
@@ -140,12 +141,24 @@ train_kwargs_MGpf = dict(
     init_step_size = 20, 
     verbose = False
 )
+train_kwargs_MGpf2 = dict(
+    train_kwargs_MG = train_kwargs_MG,
+    train_kwargs_MGpf = train_kwargs_MGpf,
+    dims = 3,
+    cluster_threshold = 1e-2,
+    cluster_spacing = 20,
+    verbose = False
+)
 
 train_kwargs_MC.update(user_args.get('train_kwargs_MC', {}))
 train_kwargs_GD.update(user_args.get('train_kwargs_GD', {}))
 train_kwargs_MG.update(user_args.get('train_kwargs_MG', {}))
 train_kwargs_MGp.update(user_args.get('train_kwargs_MGp', {}))
 train_kwargs_MGpf.update(user_args.get('train_kwargs_MGpf', {}))
+train_kwargs_MGpf2.update(user_args.get('train_kwargs_MGpf2', {}))
+# messy :(
+train_kwargs_MGpf2['train_kwargs_MG'] = {**train_kwargs_MG, **train_kwargs_MGpf2['train_kwargs_MG']}
+train_kwargs_MGpf2['train_kwargs_MGpf'] = {**train_kwargs_MGpf, **train_kwargs_MGpf2['train_kwargs_MGpf']}
 
 processes = user_args.get('processes', None)
 
@@ -213,6 +226,8 @@ if train_MGp:
   results_MGp, train_seeds_MGp = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGp)
 if train_MGpf:
   results_MGpf, train_seeds_MGpf = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions_full, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGpf)
+if train_MGpf2:
+  results_MGpf2, train_seeds_MGpf2 = train_dualrail.train_dr_multiple(train_dualrail.train_dr_MCGibbs_positions_full_2step, train_data, train_data_weights, train_utils.RMSE, processes = processes, seed = train_seed_base, pbar_file=pbar_file, reps=reps, **train_kwargs_MGpf2)
   
   
 
@@ -249,13 +264,17 @@ if train_MGpf:
   output['train_args_MGpf'] = train_kwargs_MGpf
   output['train_seeds_MGpf'] = train_seeds_MGpf
   output['results_MGpf'] = results_MGpf
+if train_MGpf2:
+  output['train_args_MGpf2'] = train_kwargs_MGpf2
+  output['train_seeds_MGpf2'] = train_seeds_MGpf2
+  output['results_MGpf2'] = results_MGpf2
  
 with open(outpath_full,'wb') as outfile:
   pickle.dump(output, outfile)
 
 # Output results for best network, and XLSX/MOL2 representations of this network
 best_results_key, best_idx, best_cost = None, None, np.inf
-for results_key in ['results_MC', 'results_GD', 'results_MG', 'results_MGp', 'results_MGpf']:
+for results_key in ['results_MC', 'results_GD', 'results_MG', 'results_MGp', 'results_MGpf', 'results_MGpf2']:
   if results_key not in output:  continue
   idx = np.argmin([res['cost'] for res in output[results_key]])
   cost = output[results_key][idx]['cost']

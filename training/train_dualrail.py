@@ -15,7 +15,7 @@ if pkg_path not in sys.path:
   sys.path.append(pkg_path)
 from objects import utils as objects
 
-from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates, rate_from_positions, random_point_on_sphere
+from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates, rate_from_positions, random_point_on_sphere, rates_to_positions
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -469,10 +469,8 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
     def params_to_rates(params):
         params_k_fret_rate, params_k_fret_toggle, params_k_decay = params
         K_fret = np.zeros((num_nodes_sr, num_nodes_sr))
-        for idx, (i,j) in enumerate(it.combinations(range(num_nodes_sr),2)): # TODO: switch to using np.triu_indices()
-            k = params_k_fret_rate[idx] if params_k_fret_toggle[idx] else 0.0
-            K_fret[i,j] = k
-            K_fret[j,i] = k
+        K_fret[np.triu_indices(num_nodes_sr, 1)] = params_k_fret_rate * params_k_fret_toggle
+        K_fret += K_fret.T
         k_decay = params_k_decay
         k_out = k_out_value*np.ones(num_nodes_sr) # use this line for fixed, uniform k_out
 #        k_out = p[-1]*np.ones(num_nodes_sr) # use this line for optimized, uniform k_out
@@ -846,12 +844,15 @@ def train_dr_MCGibbs_positions(train_data, loss, anneal_protocol, train_data_wei
    
     return output
 
+
 def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_data_weights = None, input_fluor_info = {}, compute_fluor_info = {}, position_bounds = (-1e2, 1e2), min_dist=1, max_dist_CI = np.inf, max_dist_CO = np.inf, max_dist_CQ = np.inf, dims=3, input_magnitude = 100, output_magnitude = 1, accept_rate_min = .4, accept_rate_max = .6, init_positions = None, init_step_size = 20, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def initialize_positions():
       init_pos = np.empty((num_fluorophores, dims))
       for node_idx in range(num_nodes_sr):
+        C_idx = C_idxs[node_idx]
         C_pos = rng.uniform(min_position, max_position, (dims,))
-        init_pos[C_idxs[node_idx], :] = C_pos
+        init_pos[C_idx, :] = C_pos
+
         for idx_lst, max_dist in zip([I_idxs, O_idxs, Q_idxs], [max_dist_CI, max_dist_CO, max_dist_CQ]):
           if max_dist < max_position - min_position:
             init_pos[idx_lst[node_idx], :] = random_point_on_sphere(max_dist * rng.uniform(0,1)**(1./dims), dims=dims, rng=rng) + C_pos
@@ -983,18 +984,20 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_dat
     init_params = params_from_positions(init_positions)
 
     params_cur = init_params
-    f_cur = np.inf#loss_func(positions_cur)
+    f_cur = loss_func(init_positions)
 
     accept_hist_len = 50
     step_size = init_step_size*np.ones(num_fluorophores)
     step_size_adjust = 1.05
 
-    pos_hist = []
+    pos_hist = [(None, f_cur, init_positions)]
     accept_hist = -1*np.ones((accept_hist_len, num_fluorophores), dtype=int)
     if pbar_file is None:
       temps_iter = enumerate(anneal_protocol)
     else:
       temps_iter = tqdm.tqdm(enumerate(anneal_protocol), total=len(anneal_protocol), file=pbar_file)
+
+    time_last_update = time.time()
     for i, T in temps_iter:
       steps_mag = rng.normal(0, step_size, num_fluorophores)
       steps = np.array([random_point_on_sphere(step_mag, dims=dims, rng=rng) for step_mag in steps_mag])
@@ -1051,7 +1054,7 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_dat
         step_size *= step_size_adjust ** accept_change
 #        print(accept_rate, accept_change, step_size)
 
-      if verbose and i%50 == 0:
+      if verbose and (i%500 == 0 or time.time() - time_last_update > 120):
         positions_cur = positions_from_params(params_cur)
         K_fret, K_input, K_output, K_quench = rates_from_positions(positions_cur)
         print(f'Iteration {i} (T={T}):')
@@ -1066,6 +1069,7 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_dat
         print(f'Iteration {i} (T = {T}): Step sizes = {step_size}')
         print(f'Iteration {i} (T={T}): f_cur = {f_cur}')
         loss_func(positions_cur, verbose=True)
+        time_last_update = time.time()
 
       if history_output_interval is not None and i%history_output_interval == 0:
         pos_hist.append((T, f_cur, positions_from_params(params_cur)))
@@ -1127,6 +1131,98 @@ def train_dr_MCGibbs_positions_full(train_data, loss, anneal_protocol, train_dat
    
     return output
 
+def train_dr_MCGibbs_positions_full_2step(train_data, loss, train_data_weights = None, train_kwargs_MG = {}, train_kwargs_MGpf = {}, dims = 3, cluster_threshold = 1e-2, cluster_spacing = 20, seed = None, verbose = False):
+    rng = np.random.default_rng(seed)
+
+    num_nodes_dr = len(train_data[0][0])
+    num_nodes_sr = 2*num_nodes_dr
+    num_nodes_f = 4*num_nodes_sr
+
+    # Initial training of K_fret rates directly
+    train_kwargs_MG['seed'] = train_kwargs_MG.get('seed', rng.integers(0, 10**6))
+    res_MG = train_dr_MCGibbs(train_data, loss, train_data_weights = train_data_weights, **train_kwargs_MG)
+    K_fret_0 = res_MG['K_fret']
+
+    # Run position solver for each cluster
+    input_fluor_info = train_kwargs_MGpf.get('input_fluor_info', {})
+    compute_fluor_info = train_kwargs_MGpf.get('compute_fluor_info', {})
+
+    I_k0 = input_fluor_info.get('k_0', 1)
+    C_k0 = compute_fluor_info.get('k_0', 1)
+
+    IC_r0 = input_fluor_info.get('r_0', {}).get('compute', 2)
+    CC_r0 = compute_fluor_info.get('r_0', {}).get('compute', 7)
+    CO_r0 = compute_fluor_info.get('r_0', {}).get('output', 2)
+    CQ_r0 = compute_fluor_info.get('r_0', {}).get('quencher', 2)
+
+    # Use MDS to get estimate for initial positions
+    init_pos_compute_fluors = rates_to_positions(K_fret_0, k_0 = C_k0, r_0 = CC_r0, dims=dims)
+    init_pos = np.empty((num_nodes_f, dims))
+    for node_idx in range(num_nodes_sr):
+      I_idx, C_idx, O_idx, Q_idx = node_idx, num_nodes_sr+node_idx, 2*num_nodes_sr+node_idx, 3*num_nodes_sr+node_idx
+      C_pos = init_pos_compute_fluors[node_idx, :]
+      init_pos[C_idx, :] = C_pos
+
+      for idx, ideal_dist in zip([I_idx, O_idx, Q_idx], [IC_r0, CO_r0, CQ_r0]):
+        init_pos[idx, :] = random_point_on_sphere(.5*ideal_dist * rng.uniform(0,1)**(1./dims), dims=dims, rng=rng) + C_pos
+
+    # Overwrite some arguments and run
+    train_kwargs_MGpf['seed'] = train_kwargs_MGpf.get('seed', rng.integers(0, 10**6))
+    train_kwargs_MGpf['dims'] = dims
+    train_kwargs_MGpf['init_positions'] = init_pos
+    res_MGpf = train_dr_MCGibbs_positions_full(train_data, loss, train_data_weights = train_data_weights, **train_kwargs_MGpf)
+
+    if verbose:
+      print(f'Positions optimization complete:')
+      print(f'positions:')
+      print(res_MGpf['positions'])
+      print(f'K_fret:')
+      print(res_MGpf['K_fret'])
+    
+    # Collect results
+    node_names_dr = list(map(str, range(1, num_nodes_dr+1)))
+    node_names_sr = [f'{n_dr}{pm}' for n_dr in node_names_dr for pm in ['+','-']]
+    fluor_names = [f'{node_name}_{role}' for role in ['I','C','O','Q'] for node_name in node_names_sr]
+    fluor_types = [role for role in ['I','C','O','Q'] for _ in range(num_nodes_sr)]
+    dr_to_sr_map = {n_dr: (node_names_sr[2*i], node_names_sr[2*i+1]) for i,n_dr in enumerate(node_names_dr)}
+    sr_to_fluor_map = {n_sr: tuple(fluor_names[4*i::num_nodes_sr]) for i,n_sr in enumerate(node_names_sr)}
+
+    raw = {'res_MG': res_MG, 'res_MGpf': res_MGpf}
+
+    output = {
+      'I_k0': I_k0,
+      'C_k0': C_k0,
+      'IC_r0': IC_r0,
+      'CC_r0': CC_r0,
+      'CO_r0': CO_r0,
+      'CQ_r0': CQ_r0,
+
+      'K_fret': res_MGpf['K_fret'],
+      'K_in': res_MGpf['K_in'],
+      'K_out': res_MGpf['K_out'],
+      'K_quench': res_MGpf['K_quench'],
+      'k_in': res_MGpf['k_in'],
+      'k_out': res_MGpf['k_out'],
+      'k_decay': res_MGpf['k_decay'],
+
+      'positions': res_MGpf['positions'],
+
+      'num_nodes_dr': num_nodes_dr,
+      'num_nodes_sr': num_nodes_sr,
+      'num_fluorophores': num_nodes_f,
+
+      'node_names_dr': node_names_dr,
+      'node_names_sr': node_names_sr,
+      'fluorophore_names': fluor_names,
+      'fluorophore_types': fluor_types,
+      'dr_to_sr_map': dr_to_sr_map,
+      'sr_to_fluor_map': sr_to_fluor_map,
+
+      'cost': res_MGpf['cost'],
+      'raw': raw
+    }
+    
+    return output
 
 
 def train_dr_multiple_multiprocessing_aux(args):
