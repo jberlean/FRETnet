@@ -351,12 +351,17 @@ with open(outpath_best, 'wb') as outfile:
   pickle.dump(output_best, outfile)
 
 if positions is not None:
-  positions_map = {f_name: positions[i,:] for i,f_name in enumerate(fluor_names)}
-  
-  IO.output_network_excel(outpath_best_excel, K_fret, [f for f,t in zip(fluor_names, fluor_types) if t=='C'], positions_map)
+  positions_lst = [positions[i,:] for i in range(num_fluors)]
+
+  if num_fluors == num_nodes_sr:
+    IO.output_network_excel(outpath_best_excel, node_names_sr, K_fret, positions_lst)
+  else:
+    zeros = np.zeros((num_nodes_sr, num_nodes_sr))
+    K_fret_all = np.block([[zeros, K_in, zeros, zeros], [zeros, K_fret, K_out, K_quench], [zeros]*4, [zeros]*4])
+    IO.output_network_excel(outpath_best_excel, fluor_names, K_fret_all, positions_lst)
   
   mol2_comments = [
       f'# Source: {outpath_best}',
       f'# Created by: Joseph Berleant',
   ]
-  IO.output_network_mol2(outpath_best_mol2, fluor_names, positions_map, fluor_types, outpath_prefix, mol2_comments)
+  IO.output_network_mol2(outpath_best_mol2, fluor_names, positions_lst, fluor_types, outpath_prefix, mol2_comments)

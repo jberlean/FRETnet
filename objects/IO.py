@@ -1,3 +1,6 @@
+import itertools as it
+
+import numpy as np
 import openpyxl
 
 # Excel data output
@@ -38,10 +41,22 @@ def output_positions_excel_sheet(positions, fluorophore_names, wb, ws=None, titl
   elif title is not None:
     ws.title = title
 
-  for f in fluorophore_names:
-    ws.append([f] + list(positions[f]))
+  for f, pos in zip(fluorophore_names, positions):
+    ws.append([f] + list(pos))
 
-def output_network_excel(path, K, fluorophore_names, positions = None, network = None, ideal_network = None):
+def output_distances_excel_sheet(distances, fluorophore_names, wb, ws=None, title=None):
+  if ws is None:
+    ws = wb.create_sheet(title = title) 
+  elif title is not None:
+    ws.title = title
+
+  ws.append([''] + fluorophore_names)
+  for i1, f1 in enumerate(fluorophore_names):
+    ws.append([f1] + list(distances[i1,:]))
+
+def output_network_excel(path, fluorophore_names, K, positions = None, network = None, ideal_network = None):
+  num_fluorophores = len(fluorophore_names)
+
   wb = openpyxl.Workbook()
 
   ws = wb.active
@@ -54,11 +69,14 @@ def output_network_excel(path, K, fluorophore_names, positions = None, network =
     output_network_excel_sheet(network, wb, ws=ws, title='Network rates')
     ws=None
 
-  output_K_fret_excel_sheet(K, fluorophore_names, wb, ws=ws, title='Full rate matrix')
+  output_K_fret_excel_sheet(K, fluorophore_names, wb, ws=ws, title='Rate matrix')
   ws=None
 
   if positions is not None:
-    output_positions_excel_sheet(positions, fluorophore_names, wb, ws=ws, title='Fluorophore positions')
+    distances = np.empty((num_fluorophores, num_fluorophores))
+    distances[tuple(zip(*it.product(range(num_fluorophores), repeat=2)))] = [np.linalg.norm(positions[i]-positions[j]) for i,j in it.product(range(num_fluorophores), repeat=2)]
+    output_positions_excel_sheet(positions, fluorophore_names, wb, ws=ws, title='Positions')
+    output_distances_excel_sheet(distances, fluorophore_names, wb, ws=ws, title='Distances')
 
   wb.save(filename = path)
 
@@ -83,8 +101,8 @@ def output_network_mol2(path, fluorophore_names, positions, fluorophore_types, n
     print(file=outfile)
     
     print(f'@<TRIPOS>ATOM', file=outfile)
-    for i, f in enumerate(fluorophore_names):
-      print(f'{i} {f} {positions[f][0]} {positions[f][1]} {positions[f][2]} {fluor_types_mol2[i]} 0 FRETNET', file=outfile)
+    for i, (f,pos) in enumerate(zip(fluorophore_names, positions)):
+      print(f'{i} {f} {pos[0]} {pos[1]} {pos[2]} {fluor_types_mol2[i]} 0 FRETNET', file=outfile)
     print(file=outfile)
   
     print(f'@<TRIPOS>SUBSTRUCTURE', file=outfile)
