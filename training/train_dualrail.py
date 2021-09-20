@@ -17,7 +17,7 @@ from objects import utils as objects
 
 from train_utils import off_patterns, Ainv_from_rates, A_from_rates, k_in_from_input_data, network_from_rates, rate_from_positions, random_point_on_sphere, rates_to_positions
 
-np.set_printoptions(precision=2, suppress=True)
+np.set_printoptions(precision=2, suppress=True, linewidth=250)
 
 # TODO: use functions in train_singlerail.py rather than reimplementing them here
 
@@ -455,7 +455,7 @@ def train_dr_MC(train_data, loss, train_data_weights = None, low_bound = 1e-2, h
    
     return output
 
-def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = None, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), k_fret_toggle_prob = None, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
+def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = None, train_node_mask = None, k_fret_bounds = (1e-2, 1e4), k_decay_bounds = (1, 1e4), k_fret_toggle_prob = None, input_magnitude = 1, output_magnitude = None, k_out_value = 1, accept_rate_min = .4, accept_rate_max = .6, init_K_fret = None, init_k_out = None, init_k_decay = None, init_step_size = 2, seed = None, history_output_interval = None, pbar_file = None, verbose=False):
     def rates_to_params(K_fret, k_out, k_decay):
         idxs = np.triu_indices(num_nodes_sr, 1)
         params_k_fret_toggle = (K_fret[idxs] > 0)
@@ -493,13 +493,13 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
         ]
 
         resid = np.sqrt(np.array([
-            loss.fn(output_data[0], output_data_cor)**2 * weight
+            loss.fn(output_data[0][train_node_mask], output_data_cor[train_node_mask])**2 * weight
             for output_data, (input_data, output_data_cor), weight in zip(output_data_all, train_data, train_data_weights)
         ]).sum() / train_data_weight_sum)
 
         if verbose:
           for output_data, (input_data,output_data_cor), w in zip(output_data_all, train_data, train_data_weights):
-            print(input_data, output_data_cor, output_data[0], output_data[1], loss.fn(output_data[0], output_data_cor), f'x{w}')
+            print(input_data, output_data_cor[train_node_mask], output_data[0][train_node_mask], output_data[1], loss.fn(output_data[0][train_node_mask], output_data_cor[train_node_mask]), f'x{w}')
 
         return resid
 
@@ -514,6 +514,9 @@ def train_dr_MCGibbs(train_data, loss, anneal_protocol, train_data_weights = Non
     if train_data_weights is None:
       train_data_weights = np.ones(len(train_data))
     train_data_weight_sum = sum(train_data_weights)
+
+    if train_node_mask is None:
+      train_node_mask = np.array([True]*num_nodes_dr)
 
     num_params_k_fret = num_nodes_sr*(num_nodes_sr-1)//2
     num_params_k_decay = num_nodes_sr
